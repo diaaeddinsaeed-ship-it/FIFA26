@@ -41,7 +41,7 @@ function getUserId(){
 
 var S = {
   userId: getUserId(),
-  phase:"intro", userName:"", userPhoto:null, locked:false,
+  phase:"intro", userName:"", userPhoto:null, locked:false, lockedAt:null,
   preds:{r32:[],r16:[],qf:[],sf:[],final:[]},
   liveResults:{r32:[],r16:[],qf:[],sf:[],final:[]},
   score:{pts:0,correct:0,total:0,details:[]},
@@ -112,7 +112,8 @@ function saveAndPushScore(){
     userName: S.userName,
     userPhoto: S.userPhoto,
     preds: S.preds,
-    locked: S.locked
+    locked: S.locked,
+    lockedAt: S.lockedAt
   }, function(err, data){
     if(err) return;
     // Now fetch our score
@@ -131,6 +132,7 @@ function loadFromServer(cb){
       S.userPhoto = data.user.userPhoto || null;
       S.preds = data.user.preds || S.preds;
       S.locked = !!data.user.locked;
+      S.lockedAt = data.user.lockedAt || null;
       if(data.score) S.score = data.score;
     }
     if(cb) cb();
@@ -157,7 +159,7 @@ function startAutoSync(){
 function saveLocal(){
   try{
     localStorage.setItem("diaa_wc2026_backup", JSON.stringify({
-      userName:S.userName, userPhoto:S.userPhoto, preds:S.preds, locked:S.locked
+      userName:S.userName, userPhoto:S.userPhoto, preds:S.preds, locked:S.locked, lockedAt:S.lockedAt
     }));
   }catch(e){}
 }
@@ -170,6 +172,7 @@ function loadLocalBackup(){
     if(d.userPhoto) S.userPhoto = d.userPhoto;
     if(d.preds) S.preds = d.preds;
     if(d.locked) S.locked = d.locked;
+    if(d.lockedAt) S.lockedAt = d.lockedAt;
   }catch(e){}
 }
 
@@ -346,7 +349,14 @@ function renderIntro(wrap){
     wrap.appendChild(ls);
   }
   wrap.appendChild(btn("btn btnsync","🔄 تحديث النتائج الآن",function(){ syncResults(false); }));
-  if(S.locked) wrap.appendChild(el("div","lkbanner","🔒 توقعاتك محفوظة ومقفولة"));
+  if(S.locked){
+    wrap.appendChild(el("div","lkbanner","🔒 توقعاتك محفوظة ومقفولة"));
+    if(S.lockedAt){
+      var lt2=el("div",null,"📅 "+new Date(S.lockedAt).toLocaleString("ar"));
+      lt2.style.cssText="font-size:11px;color:#667;text-align:center;margin-bottom:8px;margin-top:-4px";
+      wrap.appendChild(lt2);
+    }
+  }
   wrap.appendChild(btn("btn btng","ابدأ التوقعات ← دور الـ32",function(){ go("r32"); }));
   wrap.appendChild(btn("btn","📊 شوف ترتيب كل المشاركين",function(){ go("leaderboard"); }));
 }
@@ -373,7 +383,7 @@ function renderRound(wrap,key){
   for(var i=0;i<matches.length;i++){
     var m = matches[i]; var act = actual[i] || "";
     var hasAct = act !== ""; var isCor = hasAct && m.pick === act; var isWrong = hasAct && m.pick && !isCor;
-    var locked = isLocked || hasAct;
+    var locked = isLocked; // فقط القفل النهائي يمنع التعديل، مش وجود نتيجة فعلية
     var mc = el("div","mc"+(m.pick?" picked":""));
     var mhd = el("div","mhd");
     var mnum = el("span",null,(i+1)); mnum.style.color="#2A3A50"; mhd.appendChild(mnum);
@@ -423,14 +433,14 @@ function renderFinal(wrap){
   else if(isWrong) mhd.appendChild(el("span","rtag rtno","✗"));
   mc.appendChild(mhd);
   var mrow = el("div","mrow");
-  var th = el("button","ts"+(m.pick===m.h?" W":m.pick?" L":"")+(hasAct?" dis":""));
-  if(hasAct) th.disabled=true; th.onclick=function(){ pickTeam("final",0,m.h); };
+  var th = el("button","ts"+(m.pick===m.h?" W":m.pick?" L":"")+(S.locked?" dis":""));
+  if(S.locked) th.disabled=true; th.onclick=function(){ pickTeam("final",0,m.h); };
   th.appendChild(el("span","tflag",fl(m.h)));
   var thn=el("span","tname",m.h); thn.style.fontSize="13px"; thn.style.fontWeight="700"; th.appendChild(thn);
   if(m.pick===m.h){ var tc=el("span",null,"🏆"); tc.style.fontSize="16px"; th.appendChild(tc); }
   mrow.appendChild(th); mrow.appendChild(el("div","vs","VS"));
-  var ta = el("button","ts"+(m.pick===m.a?" W":m.pick?" L":"")+(hasAct?" dis":""));
-  if(hasAct) ta.disabled=true; ta.onclick=function(){ pickTeam("final",0,m.a); };
+  var ta = el("button","ts"+(m.pick===m.a?" W":m.pick?" L":"")+(S.locked?" dis":""));
+  if(S.locked) ta.disabled=true; ta.onclick=function(){ pickTeam("final",0,m.a); };
   if(m.pick===m.a){ var tc2=el("span",null,"🏆"); tc2.style.fontSize="16px"; ta.appendChild(tc2); }
   var tan=el("span","tname",m.a); tan.style.fontSize="13px"; tan.style.fontWeight="700"; tan.style.textAlign="left";
   ta.appendChild(tan); ta.appendChild(el("span","tflag",fl(m.a)));
@@ -455,13 +465,18 @@ function renderFinal(wrap){
   wrap.appendChild(btn("btn","← نصف النهائي",function(){ go("sf"); }));
   if(!S.locked && m.pick){
     wrap.appendChild(btn("btn btngrn","✅ موافق — تأكيد وقفل كل التوقعات",function(){
-      if(confirm("بعد الموافقة ما بتنقدر تعدل. تأكيد؟")){ S.locked=true; save(); render(); }
+      if(confirm("بعد الموافقة ما بتنقدر تعدل. تأكيد؟")){ S.locked=true; S.lockedAt=new Date().toISOString(); save(); render(); }
     }));
   }
   if(S.locked){
     var lb=el("div",null,"🔒 توقعاتك مقفولة ومحفوظة");
     lb.style.cssText="font-size:12px;color:#4CAF50;text-align:center;padding:8px;background:#081808;border-radius:8px;margin-bottom:6px";
     wrap.appendChild(lb);
+    if(S.lockedAt){
+      var lt=el("div",null,"📅 تاريخ ووقت القفل: "+new Date(S.lockedAt).toLocaleString("ar"));
+      lt.style.cssText="font-size:11px;color:#667;text-align:center;margin-bottom:6px";
+      wrap.appendChild(lt);
+    }
   }
   wrap.appendChild(btn("btn","📊 شوف ترتيب كل المشاركين",function(){ go("leaderboard"); }));
 }
@@ -499,6 +514,15 @@ function renderLeaderboard(wrap){
       info.appendChild(el("div","lb-name", u.userName || "مشترك"));
       var champTxt = u.champion ? ("🏆 "+u.champion) : "لم يحدد بطل بعد";
       info.appendChild(el("div","lb-champ", champTxt));
+      if(u.locked && u.lockedAt){
+        var lockTxt = el("div",null,"🔒 "+new Date(u.lockedAt).toLocaleDateString("ar"));
+        lockTxt.style.cssText = "font-size:9px;color:#4CAF50;margin-top:1px";
+        info.appendChild(lockTxt);
+      } else if(!u.locked){
+        var openTxt = el("div",null,"⏳ لسا ما قفل توقعاته");
+        openTxt.style.cssText = "font-size:9px;color:#C9A84C;margin-top:1px";
+        info.appendChild(openTxt);
+      }
       row.appendChild(info);
 
       var ptsBox = el("div");
