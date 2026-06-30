@@ -263,11 +263,23 @@ app.post('/api/results/refresh', async (req, res) => {
 app.post('/api/predictions/:userId', (req, res) => {
   try {
     const { userId } = req.params;
-    const { userName, userPhoto, preds, locked } = req.body;
+    const { userName, userPhoto, preds, locked, lockedAt } = req.body;
     const data = loadPredictions();
+    const existing = data.users[userId];
+
+    // مرة قُفلت التوقعات، ما حدا (ولا حتى المستخدم نفسه) يقدر يفك القفل
+    const wasLocked = existing && existing.locked;
+    const finalLocked = wasLocked ? true : !!locked;
+    const finalLockedAt = wasLocked ? existing.lockedAt : (locked ? (lockedAt || new Date().toISOString()) : null);
+
+    // لو مقفول، تجاهل أي تعديل على preds وخلي القديمة
+    const finalPreds = wasLocked ? existing.preds : preds;
+
     data.users[userId] = {
-      userId, userName, userPhoto, preds,
-      locked: !!locked,
+      userId, userName, userPhoto,
+      preds: finalPreds,
+      locked: finalLocked,
+      lockedAt: finalLockedAt,
       updatedAt: new Date().toISOString(),
     };
     savePredictions(data);
@@ -303,6 +315,7 @@ app.get('/api/leaderboard', (req, res) => {
         userName: user.userName,
         userPhoto: user.userPhoto,
         locked: user.locked,
+        lockedAt: user.lockedAt || null,
         pts: score.pts,
         correct: score.correct,
         total: score.total,
