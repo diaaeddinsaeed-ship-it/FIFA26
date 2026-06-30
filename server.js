@@ -405,6 +405,67 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, lastFetch: lastFetchTime, error: lastFetchError });
 });
 
+// =====================================================================
+// ADMIN ENDPOINTS — محمية بكود سري
+// =====================================================================
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'diaa2026admin';
+
+// قائمة كل المستخدمين
+app.get('/api/admin/users', (req, res) => {
+  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'غير مصرح' });
+  const data = loadPredictions();
+  const users = Object.values(data.users).map(u => ({
+    userId: u.userId,
+    userName: u.userName,
+    locked: u.locked,
+    lockedAt: u.lockedAt,
+    updatedAt: u.updatedAt,
+  }));
+  res.json({ success: true, users });
+});
+
+// فك قفل مستخدم معين
+app.get('/api/admin/unlock/:userId', (req, res) => {
+  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const data = loadPredictions();
+    const user = data.users[req.params.userId];
+    if (!user) return res.json({ success: false, error: 'المستخدم غير موجود' });
+    user.locked = false;
+    user.lockedAt = null;
+    savePredictions(data);
+    res.json({ success: true, message: 'تم فك القفل عن ' + (user.userName || req.params.userId) });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// تصفير مستخدم معين (حذف توقعاته كاملاً)
+app.get('/api/admin/reset/:userId', (req, res) => {
+  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const data = loadPredictions();
+    if (!data.users[req.params.userId]) return res.json({ success: false, error: 'المستخدم غير موجود' });
+    const name = data.users[req.params.userId].userName;
+    delete data.users[req.params.userId];
+    savePredictions(data);
+    res.json({ success: true, message: 'تم حذف توقعات ' + (name || req.params.userId) });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// تصفير الكل
+app.get('/api/admin/reset-all', (req, res) => {
+  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    savePredictions({ users: {} });
+    res.json({ success: true, message: 'تم تصفير كل التوقعات' });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`تحدي ضياء server running on port ${PORT}`);
