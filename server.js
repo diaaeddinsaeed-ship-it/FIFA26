@@ -32,43 +32,6 @@ const ROUND_MATCH_NUMS = {
   final: [104],
 };
 
-// R16 official pairing: which two R32 match winners play each other
-// Index is position in r32 array (0=M73, 1=M74, 2=M75, ... 15=M88)
-// R16 match 89 (idx 0) = W74(idx1) vs W77(idx4)
-// R16 match 90 (idx 1) = W73(idx0) vs W75(idx2)
-// R16 match 91 (idx 2) = W76(idx3) vs W78(idx5)
-// R16 match 92 (idx 3) = W79(idx6) vs W80(idx7)
-// R16 match 93 (idx 4) = W83(idx10) vs W84(idx11)
-// R16 match 94 (idx 5) = W81(idx8) vs W82(idx9)
-// R16 match 95 (idx 6) = W86(idx13) vs W88(idx15)
-// R16 match 96 (idx 7) = W85(idx12) vs W87(idx14)
-const R16_PAIRS = [
-  [1, 4],   // M89: W74 vs W77
-  [0, 2],   // M90: W73 vs W75
-  [3, 5],   // M91: W76 vs W78
-  [6, 7],   // M92: W79 vs W80
-  [10, 11], // M93: W83 vs W84
-  [8, 9],   // M94: W81 vs W82
-  [13, 15], // M95: W86 vs W88
-  [12, 14], // M96: W85 vs W87
-];
-
-// QF official pairing (based on R16 winners)
-// QF97 = W89 vs W90, QF98 = W93 vs W94, QF99 = W91 vs W92, QF100 = W95 vs W96
-const QF_PAIRS = [
-  [0, 1], // QF97: W89 vs W90
-  [4, 5], // QF98: W93 vs W94
-  [2, 3], // QF99: W91 vs W92
-  [6, 7], // QF100: W95 vs W96
-];
-
-// SF official pairing
-// SF101 = W97 vs W98, SF102 = W99 vs W100
-const SF_PAIRS = [
-  [0, 1], // SF101: W97 vs W98
-  [2, 3], // SF102: W99 vs W100
-];
-
 // Team name translation: English (source) -> Arabic (app)
 const TEAM_AR = {
   "Mexico": "المكسيك", "South Africa": "جنوب أفريقيا", "Czech Republic": "جمهورية التشيك", "South Korea": "كوريا الجنوبية",
@@ -109,6 +72,38 @@ let liveResultsCache = { r32: [], r16: [], qf: [], sf: [], final: [] };
 let r32FixtureNames = []; // [{h, a, date}, ...] resolved team names for R32
 let lastFetchTime = null;
 let lastFetchError = null;
+
+// =====================================================================
+// MANUAL OVERRIDES — تدخل يدوي لو مصدر النتائج تأخر
+// لا تلمس أي منطق موجود؛ هاي بس تُطبَّق فوق نتائج المصدر الخارجي
+// =====================================================================
+const ADMIN_PIN = 'diaa95';
+const OVERRIDES_FILE = path.join(__dirname, 'data', 'overrides.json');
+
+function loadOverrides() {
+  try {
+    return JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8'));
+  } catch (e) {
+    return { r32: [], r16: [], qf: [], sf: [], final: [] };
+  }
+}
+function saveOverrides(data) {
+  fs.writeFileSync(OVERRIDES_FILE, JSON.stringify(data, null, 2));
+}
+// Apply saved manual overrides on top of whatever we fetched from the source
+function applyOverrides(results) {
+  const overrides = loadOverrides();
+  for (const round of ROUNDS) {
+    const ov = overrides[round] || [];
+    ov.forEach((winner, idx) => {
+      if (winner) {
+        if (!results[round]) results[round] = [];
+        results[round][idx] = winner;
+      }
+    });
+  }
+  return results;
+}
 
 async function fetchLiveResults() {
   try {
@@ -164,7 +159,7 @@ async function fetchLiveResults() {
     });
     r32FixtureNames = newFixtures;
 
-    liveResultsCache = newResults;
+    liveResultsCache = applyOverrides(newResults);
     lastFetchTime = new Date().toISOString();
     lastFetchError = null;
     console.log(`[${lastFetchTime}] Results updated successfully`);
@@ -184,86 +179,51 @@ setInterval(fetchLiveResults, 30 * 60 * 1000);
 const ROUNDS = ['r32', 'r16', 'qf', 'sf', 'final'];
 const NEXT_ROUND = { r32: 'r16', r16: 'qf', qf: 'sf', sf: 'final' };
 
-function getWinner(match, actualResult) {
-  // Returns actual winner if known, otherwise user's pick, otherwise '؟'
-  return actualResult || (match && match.pick) || '؟';
-}
-
-function isSub(match, actualResult) {
-  // Returns true if actual winner differs from user's prediction
-  return !!(actualResult && match && match.pick && actualResult !== match.pick);
-}
-
 function rebuildBracket(preds, actual) {
-  const r32 = (preds.r32 || []).map(p => ({ h: p.h || '؟', a: p.a || '؟', pick: p.pick || '', sub: false }));
-  const r32Actual = actual.r32 || [];
+  // Given user's r32 predictions, rebuild r16/qf/sf/final based on
+  // their picks UNLESS the actual result contradicts — then propagate
+  // the real winner forward (substitution logic), marking isSub=true.
+  const r32src = (preds.r32 || []).map(p => ({ h: p.h || '؟', a: p.a || '؟', pick: p.pick || '' }));
+  const rounds = { r32: r32src.map(p => ({ ...p, sub: false })) };
 
-  // Build R16 using official FIFA bracket pairing
-  const r16 = R16_PAIRS.map((pair, idx) => {
-    const [i1, i2] = pair;
-    const m1 = r32[i1] || {};
-    const m2 = r32[i2] || {};
-    const act1 = r32Actual[i1];
-    const act2 = r32Actual[i2];
-    const h = getWinner(m1, act1);
-    const a = getWinner(m2, act2);
-    const origPred = (preds.r16 || [])[idx] || {};
-    let pick = origPred.pick || '';
-    const sub = isSub(m1, act1) || isSub(m2, act2);
-    if (pick && pick !== h && pick !== a) pick = '';
-    return { h, a, pick, sub };
-  });
+  for (let i = 0; i < ROUNDS.length - 1; i++) {
+    const cur = ROUNDS[i];
+    const next = ROUNDS[i + 1];
+    const curMatches = rounds[cur] || [];
+    const curActual = actual[cur] || [];
+    const nextPreds = preds[next] || [];
 
-  const r16Actual = actual.r16 || [];
+    const nextMatches = [];
+    for (let j = 0; j < curMatches.length; j += 2) {
+      if (!curMatches[j]) continue;
+      const m1 = curMatches[j] || { h: '؟', a: '؟', pick: '' };
+      const m2 = curMatches[j + 1] || { h: '؟', a: '؟', pick: '' };
 
-  // Build QF using official FIFA bracket pairing
-  const qf = QF_PAIRS.map((pair, idx) => {
-    const [i1, i2] = pair;
-    const m1 = r16[i1] || {};
-    const m2 = r16[i2] || {};
-    const act1 = r16Actual[i1];
-    const act2 = r16Actual[i2];
-    const h = getWinner(m1, act1);
-    const a = getWinner(m2, act2);
-    const origPred = (preds.qf || [])[idx] || {};
-    let pick = origPred.pick || '';
-    const sub = isSub(m1, act1) || isSub(m2, act2);
-    if (pick && pick !== h && pick !== a) pick = '';
-    return { h, a, pick, sub };
-  });
+      // Determine actual winners (or predicted if not played yet)
+      const act1 = curActual[j];
+      const act2 = curActual[j + 1];
 
-  const qfActual = actual.qf || [];
+      const realHome = act1 || m1.pick || '؟';
+      const realAway = act2 || m2.pick || '؟';
 
-  // Build SF using official pairing
-  const sf = SF_PAIRS.map((pair, idx) => {
-    const [i1, i2] = pair;
-    const m1 = qf[i1] || {};
-    const m2 = qf[i2] || {};
-    const act1 = qfActual[i1];
-    const act2 = qfActual[i2];
-    const h = getWinner(m1, act1);
-    const a = getWinner(m2, act2);
-    const origPred = (preds.sf || [])[idx] || {};
-    let pick = origPred.pick || '';
-    const sub = isSub(m1, act1) || isSub(m2, act2);
-    if (pick && pick !== h && pick !== a) pick = '';
-    return { h, a, pick, sub };
-  });
+      const idx = nextMatches.length;
+      const origPred = nextPreds[idx] || {};
+      let pick = origPred.pick || '';
+      let sub = false;
 
-  const sfActual = actual.sf || [];
+      // If actual result differs from what user predicted to advance, mark sub
+      if (act1 && m1.pick && act1 !== m1.pick) sub = true;
+      if (act2 && m2.pick && act2 !== m2.pick) sub = true;
 
-  // Build Final
-  const sf0 = sf[0] || {}; const sf1 = sf[1] || {};
-  const act_sf0 = sfActual[0]; const act_sf1 = sfActual[1];
-  const fh = getWinner(sf0, act_sf0);
-  const fa = getWinner(sf1, act_sf1);
-  const origFinal = (preds.final || [])[0] || {};
-  let fpick = origFinal.pick || '';
-  const fsub = isSub(sf0, act_sf0) || isSub(sf1, act_sf1);
-  if (fpick && fpick !== fh && fpick !== fa) fpick = '';
-  const finalMatch = [{ h: fh, a: fa, pick: fpick, sub: fsub }];
+      // If user's pick for this next match no longer matches either team, clear it
+      if (pick && pick !== realHome && pick !== realAway) pick = '';
 
-  return { r32, r16, qf, sf, final: finalMatch };
+      nextMatches.push({ h: realHome, a: realAway, pick, sub });
+    }
+    rounds[next] = nextMatches;
+  }
+
+  return rounds;
 }
 
 function calcUserScore(predictions, actual) {
@@ -335,23 +295,11 @@ app.post('/api/results/refresh', async (req, res) => {
 app.post('/api/predictions/:userId', (req, res) => {
   try {
     const { userId } = req.params;
-    const { userName, userPhoto, preds, locked, lockedAt } = req.body;
+    const { userName, userPhoto, preds, locked } = req.body;
     const data = loadPredictions();
-    const existing = data.users[userId];
-
-    // مرة قُفلت التوقعات، ما حدا (ولا حتى المستخدم نفسه) يقدر يفك القفل
-    const wasLocked = existing && existing.locked;
-    const finalLocked = wasLocked ? true : !!locked;
-    const finalLockedAt = wasLocked ? existing.lockedAt : (locked ? (lockedAt || new Date().toISOString()) : null);
-
-    // لو مقفول، تجاهل أي تعديل على preds وخلي القديمة
-    const finalPreds = wasLocked ? existing.preds : preds;
-
     data.users[userId] = {
-      userId, userName, userPhoto,
-      preds: finalPreds,
-      locked: finalLocked,
-      lockedAt: finalLockedAt,
+      userId, userName, userPhoto, preds,
+      locked: !!locked,
       updatedAt: new Date().toISOString(),
     };
     savePredictions(data);
@@ -387,7 +335,6 @@ app.get('/api/leaderboard', (req, res) => {
         userName: user.userName,
         userPhoto: user.userPhoto,
         locked: user.locked,
-        lockedAt: user.lockedAt || null,
         pts: score.pts,
         correct: score.correct,
         total: score.total,
@@ -406,64 +353,26 @@ app.get('/api/health', (req, res) => {
 });
 
 // =====================================================================
-// ADMIN ENDPOINTS — محمية بكود سري
+// ADMIN OVERRIDE ROUTES — إدخال نتيجة يدوياً (PIN محمي)
+// لا تؤثر إطلاقاً على توقعات المستخدمين المحفوظة (data/predictions.json)
 // =====================================================================
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'diaa2026admin';
-
-// قائمة كل المستخدمين
-app.get('/api/admin/users', (req, res) => {
-  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'غير مصرح' });
-  const data = loadPredictions();
-  const users = Object.values(data.users).map(u => ({
-    userId: u.userId,
-    userName: u.userName,
-    locked: u.locked,
-    lockedAt: u.lockedAt,
-    updatedAt: u.updatedAt,
-  }));
-  res.json({ success: true, users });
+app.get('/api/admin/overrides', (req, res) => {
+  const { pin } = req.query;
+  if (pin !== ADMIN_PIN) return res.status(401).json({ success: false, error: 'PIN غلط' });
+  res.json({ success: true, overrides: loadOverrides(), teams: TEAM_AR, roundMatchNums: ROUND_MATCH_NUMS, fixtures: r32FixtureNames });
 });
 
-// فك قفل مستخدم معين
-app.get('/api/admin/unlock/:userId', (req, res) => {
-  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'غير مصرح' });
-  try {
-    const data = loadPredictions();
-    const user = data.users[req.params.userId];
-    if (!user) return res.json({ success: false, error: 'المستخدم غير موجود' });
-    user.locked = false;
-    user.lockedAt = null;
-    savePredictions(data);
-    res.json({ success: true, message: 'تم فك القفل عن ' + (user.userName || req.params.userId) });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// تصفير مستخدم معين (حذف توقعاته كاملاً)
-app.get('/api/admin/reset/:userId', (req, res) => {
-  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'غير مصرح' });
-  try {
-    const data = loadPredictions();
-    if (!data.users[req.params.userId]) return res.json({ success: false, error: 'المستخدم غير موجود' });
-    const name = data.users[req.params.userId].userName;
-    delete data.users[req.params.userId];
-    savePredictions(data);
-    res.json({ success: true, message: 'تم حذف توقعات ' + (name || req.params.userId) });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// تصفير الكل
-app.get('/api/admin/reset-all', (req, res) => {
-  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'غير مصرح' });
-  try {
-    savePredictions({ users: {} });
-    res.json({ success: true, message: 'تم تصفير كل التوقعات' });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
+app.post('/api/admin/override', (req, res) => {
+  const { pin, round, index, winner } = req.body;
+  if (pin !== ADMIN_PIN) return res.status(401).json({ success: false, error: 'PIN غلط' });
+  if (!ROUNDS.includes(round)) return res.status(400).json({ success: false, error: 'دور غير صحيح' });
+  const overrides = loadOverrides();
+  if (!overrides[round]) overrides[round] = [];
+  overrides[round][index] = winner || null; // null clears the override for that match
+  saveOverrides(overrides);
+  // Reflect immediately in the live cache without waiting for the next scheduled fetch
+  liveResultsCache = applyOverrides({ ...liveResultsCache });
+  res.json({ success: true, overrides });
 });
 
 const PORT = process.env.PORT || 3000;
