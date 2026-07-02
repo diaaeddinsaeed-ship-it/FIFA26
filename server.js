@@ -327,7 +327,9 @@ app.get('/api/predictions/:userId', (req, res) => {
 app.get('/api/leaderboard', (req, res) => {
   try {
     const data = loadPredictions();
-    const board = Object.values(data.users).map(user => {
+    const board = Object.values(data.users)
+      .filter(user => !user.hidden) // حسابات مخفية ما بتظهر بالقائمة العامة، بس نقاطها بتضل تنحسب
+      .map(user => {
       const score = calcUserScore(user, liveResultsCache);
       const champion = user.preds.final && user.preds.final[0] ? user.preds.final[0].pick : '';
       return {
@@ -373,6 +375,69 @@ app.post('/api/admin/override', (req, res) => {
   // Reflect immediately in the live cache without waiting for the next scheduled fetch
   liveResultsCache = applyOverrides({ ...liveResultsCache });
   res.json({ success: true, overrides });
+});
+
+// List users (id + name only) so an admin page can pick who to delete
+app.get('/api/admin/users', (req, res) => {
+  const { pin } = req.query;
+  if (pin !== ADMIN_PIN) return res.status(401).json({ success: false, error: 'PIN غلط' });
+  const data = loadPredictions();
+  const users = Object.values(data.users).map(u => ({ userId: u.userId, userName: u.userName }));
+  res.json({ success: true, users });
+});
+
+// Delete a single user's saved predictions
+app.delete('/api/admin/users/:userId', (req, res) => {
+  const { pin } = req.query;
+  if (pin !== ADMIN_PIN) return res.status(401).json({ success: false, error: 'PIN غلط' });
+  const { userId } = req.params;
+  const data = loadPredictions();
+  if (!data.users[userId]) return res.status(404).json({ success: false, error: 'المستخدم مش موجود' });
+  delete data.users[userId];
+  savePredictions(data);
+  res.json({ success: true });
+});
+
+// Same delete, but as a plain GET link you can just open in the browser —
+// e.g. /api/admin/reset/USER_ID?secret=diaa95
+app.get('/api/admin/reset/:userId', (req, res) => {
+  const { secret } = req.query;
+  if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
+  const { userId } = req.params;
+  const data = loadPredictions();
+  if (!data.users[userId]) return res.status(404).send('المستخدم مش موجود: ' + userId);
+  const name = data.users[userId].userName || userId;
+  delete data.users[userId];
+  savePredictions(data);
+  res.send('تم حذف المستخدم: ' + name);
+});
+
+// Plain-text list of everyone + their userId, so you know what to put in the reset link above
+// e.g. /api/admin/list?secret=diaa95
+app.get('/api/admin/list', (req, res) => {
+  const { secret } = req.query;
+  if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
+  const data = loadPredictions();
+  const lines = Object.values(data.users).map(u =>
+    (u.userName || '(بدون اسم)') + (u.hidden ? '  [مخفي]' : '') + '  →  ' + u.userId +
+    '  →  حذف: /api/admin/reset/' + u.userId + '?secret=' + ADMIN_PIN +
+    '  →  ' + (u.hidden ? 'إظهار' : 'إخفاء') + ': /api/admin/toggle-hide/' + u.userId + '?secret=' + ADMIN_PIN
+  );
+  res.type('text/plain').send(lines.length ? lines.join('\n\n') : 'ما في مشتركين مسجلين حالياً');
+});
+
+// Hide/unhide a user from the public leaderboard — their points still count, they just don't show
+// e.g. /api/admin/toggle-hide/USER_ID?secret=diaa95
+app.get('/api/admin/toggle-hide/:userId', (req, res) => {
+  const { secret } = req.query;
+  if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
+  const { userId } = req.params;
+  const data = loadPredictions();
+  if (!data.users[userId]) return res.status(404).send('المستخدم مش موجود: ' + userId);
+  data.users[userId].hidden = !data.users[userId].hidden;
+  savePredictions(data);
+  const name = data.users[userId].userName || userId;
+  res.send((data.users[userId].hidden ? 'تم إخفاء: ' : 'تم إظهار: ') + name);
 });
 
 const PORT = process.env.PORT || 3000;
