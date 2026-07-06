@@ -211,12 +211,18 @@ function rebuildBracket(preds, actual) {
       let pick = origPred.pick || '';
       let sub = false;
 
-      // If actual result differs from what user predicted to advance, mark sub
-      if (act1 && m1.pick && act1 !== m1.pick) sub = true;
-      if (act2 && m2.pick && act2 !== m2.pick) sub = true;
-
-      // Keep the user's original pick even if it no longer matches either real team —
-      // it should count as an attempted (and wrong) pick, not disappear as unanswered.
+      // If the team the user picked to advance actually got eliminated,
+      // automatically carry their next-round pick forward onto whichever
+      // real team took that spot (partial credit), instead of leaving it
+      // blank or stuck referencing an eliminated team.
+      if (act1 && m1.pick && act1 !== m1.pick) {
+        sub = true;
+        if (pick === m1.pick) pick = act1;
+      }
+      if (act2 && m2.pick && act2 !== m2.pick) {
+        sub = true;
+        if (pick === m2.pick) pick = act2;
+      }
 
       nextMatches.push({ h: realHome, a: realAway, pick, sub });
     }
@@ -455,4 +461,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`تحدي ضياء server running on port ${PORT}`);
 });
-
