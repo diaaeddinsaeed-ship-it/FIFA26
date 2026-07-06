@@ -41,7 +41,7 @@ function getUserId(){
 
 var S = {
   userId: getUserId(),
-  phase:"intro", userName:"", userPhoto:null, locked:false, lockedAt:null,
+  phase:"intro", userName:"", userPhoto:null, locked:false,
   preds:{r32:[],r16:[],qf:[],sf:[],final:[]},
   liveResults:{r32:[],r16:[],qf:[],sf:[],final:[]},
   score:{pts:0,correct:0,total:0,details:[]},
@@ -112,8 +112,7 @@ function saveAndPushScore(){
     userName: S.userName,
     userPhoto: S.userPhoto,
     preds: S.preds,
-    locked: S.locked,
-    lockedAt: S.lockedAt
+    locked: S.locked
   }, function(err, data){
     if(err) return;
     // Now fetch our score
@@ -132,7 +131,6 @@ function loadFromServer(cb){
       S.userPhoto = data.user.userPhoto || null;
       S.preds = data.user.preds || S.preds;
       S.locked = !!data.user.locked;
-      S.lockedAt = data.user.lockedAt || null;
       if(data.score) S.score = data.score;
     }
     if(cb) cb();
@@ -159,7 +157,7 @@ function startAutoSync(){
 function saveLocal(){
   try{
     localStorage.setItem("diaa_wc2026_backup", JSON.stringify({
-      userName:S.userName, userPhoto:S.userPhoto, preds:S.preds, locked:S.locked, lockedAt:S.lockedAt
+      userName:S.userName, userPhoto:S.userPhoto, preds:S.preds, locked:S.locked
     }));
   }catch(e){}
 }
@@ -172,7 +170,6 @@ function loadLocalBackup(){
     if(d.userPhoto) S.userPhoto = d.userPhoto;
     if(d.preds) S.preds = d.preds;
     if(d.locked) S.locked = d.locked;
-    if(d.lockedAt) S.lockedAt = d.lockedAt;
   }catch(e){}
 }
 
@@ -223,87 +220,22 @@ function allPicked(arr){
   return true;
 }
 
-// ================================================================
-// OFFICIAL FIFA BRACKET PAIRING
-// ================================================================
-// R32 positions: 0=M73, 1=M74, 2=M75, 3=M76, 4=M77, 5=M78,
-//               6=M79, 7=M80, 8=M81, 9=M82, 10=M83, 11=M84,
-//               12=M85, 13=M86, 14=M87, 15=M88
-var R16_PAIRS = [
-  [1, 4],   // M89: W74 vs W77
-  [0, 2],   // M90: W73 vs W75
-  [3, 5],   // M91: W76 vs W78
-  [6, 7],   // M92: W79 vs W80
-  [10, 11], // M93: W83 vs W84
-  [8, 9],   // M94: W81 vs W82
-  [13, 15], // M95: W86 vs W88
-  [12, 14], // M96: W85 vs W87
-];
-var QF_PAIRS = [
-  [0, 1], // QF97: W89 vs W90
-  [4, 5], // QF98: W93 vs W94
-  [2, 3], // QF99: W91 vs W92
-  [6, 7], // QF100: W95 vs W96
-];
-var SF_PAIRS = [
-  [0, 1], // SF101: W97 vs W98
-  [2, 3], // SF102: W99 vs W100
-];
-
-function getWinnerFE(match, actualArr, idx) {
-  var act = actualArr && actualArr[idx];
-  return act || (match && match.pick) || "؟";
+function rebuildNext(from){
+  var toMap={r32:"r16",r16:"qf",qf:"sf",sf:"final"};
+  var toKey=toMap[from]; if(!toKey) return;
+  var src=S.preds[from]||[];
+  var ex=S.preds[toKey]||[];
+  var next=[];
+  for(var i=0;i<src.length;i+=2){
+    var h=src[i]&&src[i].pick?src[i].pick:"؟";
+    var a=src[i+1]&&src[i+1].pick?src[i+1].pick:"؟";
+    var old=ex[next.length]||{};
+    var pick=(old.pick&&(old.pick===h||old.pick===a))?old.pick:"";
+    next.push({h:h,a:a,pick:pick});
+  }
+  S.preds[toKey]=next;
 }
-
-function rebuildAll() {
-  var r32 = S.preds.r32 || [];
-  var r32act = S.liveResults.r32 || [];
-
-  // Build R16
-  var r16 = [];
-  for(var i=0;i<R16_PAIRS.length;i++){
-    var i1=R16_PAIRS[i][0], i2=R16_PAIRS[i][1];
-    var m1=r32[i1]||{}, m2=r32[i2]||{};
-    var h=getWinnerFE(m1,r32act,i1), a=getWinnerFE(m2,r32act,i2);
-    var old=(S.preds.r16||[])[i]||{};
-    var pick=(old.pick&&(old.pick===h||old.pick===a))?old.pick:"";
-    r16.push({h:h,a:a,pick:pick});
-  }
-  S.preds.r16 = r16;
-  var r16act = S.liveResults.r16 || [];
-
-  // Build QF
-  var qf = [];
-  for(var i=0;i<QF_PAIRS.length;i++){
-    var i1=QF_PAIRS[i][0], i2=QF_PAIRS[i][1];
-    var m1=r16[i1]||{}, m2=r16[i2]||{};
-    var h=getWinnerFE(m1,r16act,i1), a=getWinnerFE(m2,r16act,i2);
-    var old=(S.preds.qf||[])[i]||{};
-    var pick=(old.pick&&(old.pick===h||old.pick===a))?old.pick:"";
-    qf.push({h:h,a:a,pick:pick});
-  }
-  S.preds.qf = qf;
-  var qfact = S.liveResults.qf || [];
-
-  // Build SF
-  var sf = [];
-  for(var i=0;i<SF_PAIRS.length;i++){
-    var i1=SF_PAIRS[i][0], i2=SF_PAIRS[i][1];
-    var m1=qf[i1]||{}, m2=qf[i2]||{};
-    var h=getWinnerFE(m1,qfact,i1), a=getWinnerFE(m2,qfact,i2);
-    var old=(S.preds.sf||[])[i]||{};
-    var pick=(old.pick&&(old.pick===h||old.pick===a))?old.pick:"";
-    sf.push({h:h,a:a,pick:pick});
-  }
-  S.preds.sf = sf;
-  var sfact = S.liveResults.sf || [];
-
-  // Build Final
-  var h=getWinnerFE(sf[0],sfact,0), a=getWinnerFE(sf[1],sfact,1);
-  var oldF=(S.preds.final||[])[0]||{};
-  var pick=(oldF.pick&&(oldF.pick===h||oldF.pick===a))?oldF.pick:"";
-  S.preds.final = [{h:h,a:a,pick:pick}];
-}
+function rebuildAll(){ rebuildNext("r32"); rebuildNext("r16"); rebuildNext("qf"); rebuildNext("sf"); }
 
 function go(ph){
   S.phase = ph;
@@ -414,14 +346,7 @@ function renderIntro(wrap){
     wrap.appendChild(ls);
   }
   wrap.appendChild(btn("btn btnsync","🔄 تحديث النتائج الآن",function(){ syncResults(false); }));
-  if(S.locked){
-    wrap.appendChild(el("div","lkbanner","🔒 توقعاتك محفوظة ومقفولة"));
-    if(S.lockedAt){
-      var lt2=el("div",null,"📅 "+new Date(S.lockedAt).toLocaleString("ar"));
-      lt2.style.cssText="font-size:11px;color:#667;text-align:center;margin-bottom:8px;margin-top:-4px";
-      wrap.appendChild(lt2);
-    }
-  }
+  if(S.locked) wrap.appendChild(el("div","lkbanner","🔒 توقعاتك محفوظة ومقفولة"));
   wrap.appendChild(btn("btn btng","ابدأ التوقعات ← دور الـ32",function(){ go("r32"); }));
   wrap.appendChild(btn("btn","📊 شوف ترتيب كل المشاركين",function(){ go("leaderboard"); }));
 }
@@ -448,7 +373,7 @@ function renderRound(wrap,key){
   for(var i=0;i<matches.length;i++){
     var m = matches[i]; var act = actual[i] || "";
     var hasAct = act !== ""; var isCor = hasAct && m.pick === act; var isWrong = hasAct && m.pick && !isCor;
-    var locked = isLocked; // فقط القفل النهائي يمنع التعديل، مش وجود نتيجة فعلية
+    var locked = isLocked || hasAct;
     var mc = el("div","mc"+(m.pick?" picked":""));
     var mhd = el("div","mhd");
     var mnum = el("span",null,(i+1)); mnum.style.color="#2A3A50"; mhd.appendChild(mnum);
@@ -498,14 +423,14 @@ function renderFinal(wrap){
   else if(isWrong) mhd.appendChild(el("span","rtag rtno","✗"));
   mc.appendChild(mhd);
   var mrow = el("div","mrow");
-  var th = el("button","ts"+(m.pick===m.h?" W":m.pick?" L":"")+(S.locked?" dis":""));
-  if(S.locked) th.disabled=true; th.onclick=function(){ pickTeam("final",0,m.h); };
+  var th = el("button","ts"+(m.pick===m.h?" W":m.pick?" L":"")+(hasAct?" dis":""));
+  if(hasAct) th.disabled=true; th.onclick=function(){ pickTeam("final",0,m.h); };
   th.appendChild(el("span","tflag",fl(m.h)));
   var thn=el("span","tname",m.h); thn.style.fontSize="13px"; thn.style.fontWeight="700"; th.appendChild(thn);
   if(m.pick===m.h){ var tc=el("span",null,"🏆"); tc.style.fontSize="16px"; th.appendChild(tc); }
   mrow.appendChild(th); mrow.appendChild(el("div","vs","VS"));
-  var ta = el("button","ts"+(m.pick===m.a?" W":m.pick?" L":"")+(S.locked?" dis":""));
-  if(S.locked) ta.disabled=true; ta.onclick=function(){ pickTeam("final",0,m.a); };
+  var ta = el("button","ts"+(m.pick===m.a?" W":m.pick?" L":"")+(hasAct?" dis":""));
+  if(hasAct) ta.disabled=true; ta.onclick=function(){ pickTeam("final",0,m.a); };
   if(m.pick===m.a){ var tc2=el("span",null,"🏆"); tc2.style.fontSize="16px"; ta.appendChild(tc2); }
   var tan=el("span","tname",m.a); tan.style.fontSize="13px"; tan.style.fontWeight="700"; tan.style.textAlign="left";
   ta.appendChild(tan); ta.appendChild(el("span","tflag",fl(m.a)));
@@ -530,18 +455,13 @@ function renderFinal(wrap){
   wrap.appendChild(btn("btn","← نصف النهائي",function(){ go("sf"); }));
   if(!S.locked && m.pick){
     wrap.appendChild(btn("btn btngrn","✅ موافق — تأكيد وقفل كل التوقعات",function(){
-      if(confirm("بعد الموافقة ما بتنقدر تعدل. تأكيد؟")){ S.locked=true; S.lockedAt=new Date().toISOString(); save(); render(); }
+      if(confirm("بعد الموافقة ما بتنقدر تعدل. تأكيد؟")){ S.locked=true; save(); render(); }
     }));
   }
   if(S.locked){
     var lb=el("div",null,"🔒 توقعاتك مقفولة ومحفوظة");
     lb.style.cssText="font-size:12px;color:#4CAF50;text-align:center;padding:8px;background:#081808;border-radius:8px;margin-bottom:6px";
     wrap.appendChild(lb);
-    if(S.lockedAt){
-      var lt=el("div",null,"📅 تاريخ ووقت القفل: "+new Date(S.lockedAt).toLocaleString("ar"));
-      lt.style.cssText="font-size:11px;color:#667;text-align:center;margin-bottom:6px";
-      wrap.appendChild(lt);
-    }
   }
   wrap.appendChild(btn("btn","📊 شوف ترتيب كل المشاركين",function(){ go("leaderboard"); }));
 }
@@ -561,6 +481,8 @@ function renderLeaderboard(wrap){
   }else{
     S.leaderboard.forEach(function(u, idx){
       var row = el("div","lb-row");
+      row.style.cursor = "pointer";
+      row.onclick = function(){ showUserPicks(u.userId, u.userName); };
       var rankCls = idx===0?"gold":idx===1?"silver":idx===2?"bronze":"";
       var rank = el("div","lb-rank "+rankCls, String(idx+1));
       row.appendChild(rank);
@@ -579,15 +501,6 @@ function renderLeaderboard(wrap){
       info.appendChild(el("div","lb-name", u.userName || "مشترك"));
       var champTxt = u.champion ? ("🏆 "+u.champion) : "لم يحدد بطل بعد";
       info.appendChild(el("div","lb-champ", champTxt));
-      if(u.locked && u.lockedAt){
-        var lockTxt = el("div",null,"🔒 "+new Date(u.lockedAt).toLocaleDateString("ar"));
-        lockTxt.style.cssText = "font-size:9px;color:#4CAF50;margin-top:1px";
-        info.appendChild(lockTxt);
-      } else if(!u.locked){
-        var openTxt = el("div",null,"⏳ لسا ما قفل توقعاته");
-        openTxt.style.cssText = "font-size:9px;color:#C9A84C;margin-top:1px";
-        info.appendChild(openTxt);
-      }
       row.appendChild(info);
 
       var ptsBox = el("div");
@@ -612,6 +525,57 @@ function pickTeam(key,idx,team){
   if(!S.preds[key] || !S.preds[key][idx]) return;
   S.preds[key][idx].pick = team;
   rebuildAll(); save(); render();
+}
+
+// ================================================================
+// VIEW ANOTHER PARTICIPANT'S PICKS (read-only popup)
+// ================================================================
+function showUserPicks(userId, userName){
+  var overlay = el("div");
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999;display:flex;align-items:flex-end;justify-content:center";
+  overlay.onclick = function(e){ if(e.target === overlay) document.body.removeChild(overlay); };
+
+  var box = el("div");
+  box.style.cssText = "background:#0D1F3E;border-radius:16px 16px 0 0;max-height:80vh;overflow-y:auto;width:100%;max-width:480px;padding:16px";
+  var title = el("div",null,"توقعات "+(userName||"المشترك"));
+  title.style.cssText = "font-size:16px;font-weight:700;color:#C9A84C;margin-bottom:12px;text-align:center";
+  box.appendChild(title);
+
+  var loading = el("div",null,"جاري التحميل...");
+  loading.style.cssText = "text-align:center;color:#8899AA;padding:20px";
+  box.appendChild(loading);
+
+  var closeBtn = btn("btn","إغلاق",function(){ document.body.removeChild(overlay); });
+  closeBtn.style.marginTop = "12px";
+  box.appendChild(closeBtn);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  apiGet(API + "/api/predictions/" + encodeURIComponent(userId), function(err, data){
+    box.removeChild(loading);
+    if(err || !data || !data.success || !data.user){
+      var e2 = el("div",null,"تعذر تحميل التوقعات"); e2.style.cssText="text-align:center;color:#ff6b6b;padding:12px";
+      box.insertBefore(e2, closeBtn);
+      return;
+    }
+    var preds = data.user.preds || {};
+    ROUNDS.forEach(function(rk){
+      var list = preds[rk] || [];
+      if(!list.length) return;
+      var sec = el("div"); sec.style.marginBottom = "10px";
+      var h = el("div",null, RNAMES[rk]);
+      h.style.cssText = "font-size:13px;color:#C9A84C;font-weight:700;margin:10px 0 6px";
+      sec.appendChild(h);
+      list.forEach(function(m){
+        if(!m || !m.pick) return;
+        var line = el("div", null, fl(m.pick)+" "+m.pick);
+        line.style.cssText = "font-size:13px;color:#E8E8E8;padding:6px 10px;background:#060C18;border-radius:8px;margin-bottom:5px";
+        sec.appendChild(line);
+      });
+      box.insertBefore(sec, closeBtn);
+    });
+  });
 }
 
 // ================================================================
