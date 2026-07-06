@@ -211,17 +211,17 @@ function rebuildBracket(preds, actual) {
       let pick = origPred.pick || '';
       let sub = false;
 
-      // If the team the user picked to advance actually got eliminated,
-      // automatically carry their next-round pick forward onto whichever
-      // real team took that spot (partial credit), instead of leaving it
-      // blank or stuck referencing an eliminated team.
-      if (act1 && m1.pick && act1 !== m1.pick) {
-        sub = true;
-        if (pick === m1.pick) pick = act1;
-      }
-      if (act2 && m2.pick && act2 !== m2.pick) {
-        sub = true;
-        if (pick === m2.pick) pick = act2;
+      // Only treat this pick as a "substitution" if it specifically traces
+      // back to the team that got swapped — not just because the OTHER
+      // slot in this pairing had an unrelated upset. Also inherit sub
+      // status along the correct lineage (e.g. a team that was itself
+      // already a substitute in an earlier round stays a substitute).
+      if (pick && pick === m1.pick) {
+        if (act1 && act1 !== m1.pick) { sub = true; pick = act1; }
+        else if (m1.sub) { sub = true; }
+      } else if (pick && pick === m2.pick) {
+        if (act2 && act2 !== m2.pick) { sub = true; pick = act2; }
+        else if (m2.sub) { sub = true; }
       }
 
       nextMatches.push({ h: realHome, a: realAway, pick, sub });
@@ -323,7 +323,7 @@ app.get('/api/predictions/:userId', (req, res) => {
     const user = data.users[userId];
     if (!user) return res.json({ success: true, user: null });
     const score = calcUserScore(user, liveResultsCache);
-    res.json({ success: true, user, score: { pts: score.pts, correct: score.correct, total: score.total, details: score.details } });
+    res.json({ success: true, user, score: { pts: score.pts, correct: score.correct, total: score.total, details: score.details, rebuilt: score.rebuilt } });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
