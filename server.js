@@ -215,8 +215,8 @@ function rebuildBracket(preds, actual) {
       if (act1 && m1.pick && act1 !== m1.pick) sub = true;
       if (act2 && m2.pick && act2 !== m2.pick) sub = true;
 
-      // If user's pick for this next match no longer matches either team, clear it
-      if (pick && pick !== realHome && pick !== realAway) pick = '';
+      // Keep the user's original pick even if it no longer matches either real team —
+      // it should count as an attempted (and wrong) pick, not disappear as unanswered.
 
       nextMatches.push({ h: realHome, a: realAway, pick, sub });
     }
@@ -412,18 +412,29 @@ app.get('/api/admin/reset/:userId', (req, res) => {
   res.send('تم حذف المستخدم: ' + name);
 });
 
-// Plain-text list of everyone + their userId, so you know what to put in the reset link above
+// HTML list of everyone + clickable delete/hide links, so you know what to put in the reset link above
 // e.g. /api/admin/list?secret=diaa95
 app.get('/api/admin/list', (req, res) => {
   const { secret } = req.query;
   if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
   const data = loadPredictions();
-  const lines = Object.values(data.users).map(u =>
-    (u.userName || '(بدون اسم)') + (u.hidden ? '  [مخفي]' : '') + '  →  ' + u.userId +
-    '  →  حذف: /api/admin/reset/' + u.userId + '?secret=' + ADMIN_PIN +
-    '  →  ' + (u.hidden ? 'إظهار' : 'إخفاء') + ': /api/admin/toggle-hide/' + u.userId + '?secret=' + ADMIN_PIN
-  );
-  res.type('text/plain').send(lines.length ? lines.join('\n\n') : 'ما في مشتركين مسجلين حالياً');
+  const users = Object.values(data.users);
+  const rows = users.map(u => `
+    <div style="background:#0D1F3E;border:1px solid #1E3050;border-radius:10px;padding:12px;margin-bottom:10px;font-family:-apple-system,Arial,sans-serif">
+      <div style="color:#C9A84C;font-weight:700;font-size:15px;margin-bottom:8px">
+        ${u.userName || '(بدون اسم)'} ${u.hidden ? '<span style="color:#ff6b6b;font-size:12px">[مخفي]</span>' : ''}
+      </div>
+      <a href="/api/admin/reset/${u.userId}?secret=${ADMIN_PIN}"
+         onclick="return confirm('متأكد من حذف ${u.userName || u.userId}؟')"
+         style="display:inline-block;background:#6B1A1A;color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:13px;margin-left:8px">🗑️ حذف</a>
+      <a href="/api/admin/toggle-hide/${u.userId}?secret=${ADMIN_PIN}"
+         style="display:inline-block;background:#3A2A1A;color:#F0D060;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:13px">${u.hidden ? '👁️ إظهار' : '🙈 إخفاء'}</a>
+    </div>`).join('');
+  res.send(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>إدارة المشتركين</title></head>
+    <body style="background:#0A1628;padding:14px;margin:0">
+      <h2 style="color:#C9A84C;font-family:-apple-system,Arial,sans-serif;font-size:16px;text-align:center;margin-bottom:16px">👥 إدارة المشتركين</h2>
+      ${users.length ? rows : '<div style="color:#8899AA;text-align:center;font-family:-apple-system,Arial,sans-serif;padding:20px">ما في مشتركين مسجلين حالياً</div>'}
+    </body></html>`);
 });
 
 // Hide/unhide a user from the public leaderboard — their points still count, they just don't show
@@ -444,3 +455,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`تحدي ضياء server running on port ${PORT}`);
 });
+
