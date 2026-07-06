@@ -355,7 +355,8 @@ function renderIntro(wrap){
 // ROUND
 // ================================================================
 function renderRound(wrap,key){
-  var matches = S.preds[key] || [];
+  var rebuilt = (S.locked && S.score && S.score.rebuilt && S.score.rebuilt[key]) ? S.score.rebuilt[key] : null;
+  var matches = rebuilt || S.preds[key] || [];
   var actual = S.liveResults[key] || [];
   var isLocked = S.locked;
   var nextMap={r32:"r16",r16:"qf",qf:"sf",sf:"final"};
@@ -377,7 +378,7 @@ function renderRound(wrap,key){
     var mc = el("div","mc"+(m.pick?" picked":""));
     var mhd = el("div","mhd");
     var mnum = el("span",null,(i+1)); mnum.style.color="#2A3A50"; mhd.appendChild(mnum);
-    if(isCor) mhd.appendChild(el("span","rtag rtok","✓+2"));
+    if(isCor) mhd.appendChild(el("span","rtag rtok", m.sub ? "✓+1" : "✓+2"));
     else if(isWrong) mhd.appendChild(el("span","rtag rtno","✗"));
     mc.appendChild(mhd);
     var mrow = el("div","mrow");
@@ -406,7 +407,8 @@ function renderRound(wrap,key){
 // FINAL
 // ================================================================
 function renderFinal(wrap){
-  var m = (S.preds.final||[])[0] || {h:"؟",a:"؟",pick:""};
+  var rebuiltFinal = (S.locked && S.score && S.score.rebuilt && S.score.rebuilt.final) ? S.score.rebuilt.final[0] : null;
+  var m = rebuiltFinal || (S.preds.final||[])[0] || {h:"؟",a:"؟",pick:""};
   var act = (S.liveResults.final||[])[0] || "";
   var hasAct = act !== ""; var isCor = hasAct && m.pick === act; var isWrong = hasAct && m.pick && !isCor;
 
@@ -419,7 +421,7 @@ function renderFinal(wrap){
 
   var mc = el("div","mc"+(m.pick?" picked":"")); mc.style.border="1px solid #C9A84C44"; mc.style.marginBottom="14px";
   var mhd = el("div","mhd"); mhd.appendChild(el("span",null,"البطل"));
-  if(isCor) mhd.appendChild(el("span","rtag rtok","✓+2"));
+  if(isCor) mhd.appendChild(el("span","rtag rtok", m.sub ? "✓+1" : "✓+2"));
   else if(isWrong) mhd.appendChild(el("span","rtag rtno","✗"));
   mc.appendChild(mhd);
   var mrow = el("div","mrow");
@@ -593,3 +595,4 @@ loadFromServer(function(){
     startAutoSync();
   });
 });
+
