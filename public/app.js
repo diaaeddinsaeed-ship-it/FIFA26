@@ -595,4 +595,3 @@ loadFromServer(function(){
     startAutoSync();
   });
 });
-
