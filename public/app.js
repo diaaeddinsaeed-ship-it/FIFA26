@@ -1,498 +1,609 @@
 // =====================================================================
-// تحدي ضياء — كأس العالم 2026
-// السيرفر الرئيسي — يجيب النتائج تلقائياً من الإنترنت ويحسب النقاط
+// تحدي ضياء — كأس العالم 2026 — Frontend
+// كل النقاط تُحسب تلقائياً من السيرفر بناءً على نتائج حقيقية من الإنترنت
 // =====================================================================
 
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
-const fs = require('fs');
+var API = ""; // same-origin, served by our own server
 
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// R32 fixture names are fetched dynamically from the server (which resolves
+// "best 3rd place" slots automatically once group stage results are known).
 
-const DATA_FILE = path.join(__dirname, 'data', 'predictions.json');
-const SOURCE_URL = 'https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json';
+var FL={
+  "ألمانيا":"🇩🇪","فرنسا":"🇫🇷","إسبانيا":"🇪🇸","البرتغال":"🇵🇹","هولندا":"🇳🇱",
+  "بلجيكا":"🇧🇪","إنجلترا":"🏴","كرواتيا":"🇭🇷","السويد":"🇸🇪","النرويج":"🇳🇴",
+  "سويسرا":"🇨🇭","النمسا":"🇦🇹","البرازيل":"🇧🇷","الأرجنتين":"🇦🇷","كولومبيا":"🇨🇴",
+  "المكسيك":"🇲🇽","الولايات المتحدة":"🇺🇸","كندا":"🇨🇦","اليابان":"🇯🇵",
+  "أستراليا":"🇦🇺","المغرب":"🇲🇦","السنغال":"🇸🇳","مصر":"🇪🇬","غانا":"🇬🇭",
+  "كوت ديفوار":"🇨🇮","جنوب أفريقيا":"🇿🇦","الرأس الأخضر":"🇨🇻","الجزائر":"🇩🇿",
+  "الكونغو الديمقراطية":"🇨🇩","باراغواي":"🇵🇾","البوسنة والهرسك":"🇧🇦","الإكوادور":"🇪🇨",
+  "كوريا الجنوبية":"🇰🇷","جمهورية التشيك":"🇨🇿","قطر":"🇶🇦","اسكتلندا":"🏴",
+  "هايتي":"🇭🇹","تركيا":"🇹🇷","كوراساو":"🇨🇼","اليابان":"🇯🇵","تونس":"🇹🇳",
+  "إيران":"🇮🇷","نيوزيلندا":"🇳🇿","السعودية":"🇸🇦","أوروغواي":"🇺🇾","النرويج":"🇳🇴",
+  "الأردن":"🇯🇴","أوزبكستان":"🇺🇿","بنما":"🇵🇦"
+};
+function fl(t){return FL[t]||"🏳";}
 
-// Ensure data directory exists
-if (!fs.existsSync(path.join(__dirname, 'data'))) {
-  fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
+var ROUNDS=["r32","r16","qf","sf","final"];
+var RNAMES={r32:"دور الـ32",r16:"دور الـ16",qf:"ربع النهائي",sf:"نصف النهائي",final:"النهائي"};
+var SAVE_KEY="diaa_wc2026_userid";
+
+// ================================================================
+// STATE
+// ================================================================
+function genUserId(){
+  return "u"+Date.now()+"_"+Math.random().toString(36).substr(2,9);
+}
+function getUserId(){
+  var id = localStorage.getItem(SAVE_KEY);
+  if(!id){ id = genUserId(); localStorage.setItem(SAVE_KEY, id); }
+  return id;
 }
 
-// =====================================================================
-// MATCH NUMBER MAPPING — official FIFA match numbers per round
-// =====================================================================
-const ROUND_MATCH_NUMS = {
-  r32:   [73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88],
-  r16:   [89, 90, 91, 92, 93, 94, 95, 96],
-  qf:    [97, 98, 99, 100],
-  sf:    [101, 102],
-  final: [104],
+var S = {
+  userId: getUserId(),
+  phase:"intro", userName:"", userPhoto:null, locked:false,
+  preds:{r32:[],r16:[],qf:[],sf:[],final:[]},
+  liveResults:{r32:[],r16:[],qf:[],sf:[],final:[]},
+  score:{pts:0,correct:0,total:0,details:[]},
+  lastFetch:null,
+  leaderboard:[]
 };
 
-// Team name translation: English (source) -> Arabic (app)
-const TEAM_AR = {
-  "Mexico": "المكسيك", "South Africa": "جنوب أفريقيا", "Czech Republic": "جمهورية التشيك", "South Korea": "كوريا الجنوبية",
-  "Canada": "كندا", "Bosnia & Herzegovina": "البوسنة والهرسك", "Qatar": "قطر", "Switzerland": "سويسرا",
-  "Brazil": "البرازيل", "Morocco": "المغرب", "Haiti": "هايتي", "Scotland": "اسكتلندا",
-  "USA": "الولايات المتحدة", "Paraguay": "باراغواي", "Australia": "أستراليا", "Turkey": "تركيا",
-  "Germany": "ألمانيا", "Curaçao": "كوراساو", "Ivory Coast": "كوت ديفوار", "Ecuador": "الإكوادور",
-  "Netherlands": "هولندا", "Japan": "اليابان", "Sweden": "السويد", "Tunisia": "تونس",
-  "Belgium": "بلجيكا", "Egypt": "مصر", "Iran": "إيران", "New Zealand": "نيوزيلندا",
-  "Spain": "إسبانيا", "Cape Verde": "الرأس الأخضر", "Saudi Arabia": "السعودية", "Uruguay": "أوروغواي",
-  "France": "فرنسا", "Senegal": "السنغال", "Iraq": "العراق", "Norway": "النرويج",
-  "Argentina": "الأرجنتين", "Algeria": "الجزائر", "Austria": "النمسا", "Jordan": "الأردن",
-  "Portugal": "البرتغال", "DR Congo": "الكونغو الديمقراطية", "Uzbekistan": "أوزبكستان", "Colombia": "كولومبيا",
-  "England": "إنجلترا", "Croatia": "كرواتيا", "Ghana": "غانا", "Panama": "بنما",
-};
-function toArabic(name) {
-  return TEAM_AR[name] || name;
+// ================================================================
+// SERVER COMMUNICATION
+// ================================================================
+function apiGet(url, cb){
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", url, true);
+  xhr.onreadystatechange = function(){
+    if(xhr.readyState !== 4) return;
+    try{
+      var data = JSON.parse(xhr.responseText);
+      cb(null, data);
+    }catch(e){ cb(e); }
+  };
+  xhr.onerror = function(){ cb(new Error("network error")); };
+  xhr.send();
+}
+function apiPost(url, body, cb){
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", url, true);
+  xhr.setRequestHeader("Content-Type", "application/json");
+  xhr.onreadystatechange = function(){
+    if(xhr.readyState !== 4) return;
+    try{
+      var data = JSON.parse(xhr.responseText);
+      cb(null, data);
+    }catch(e){ cb(e); }
+  };
+  xhr.onerror = function(){ cb(new Error("network error")); };
+  xhr.send(JSON.stringify(body));
 }
 
-// =====================================================================
-// PREDICTIONS STORAGE — كل توقعات المشاركين
-// =====================================================================
-function loadPredictions() {
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-  } catch (e) {
-    return { users: {} };
-  }
-}
-function savePredictions(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+function showBar(state, msg){
+  var b = document.getElementById("nbar");
+  b.className = state; b.style.display = "flex"; b.innerHTML = "";
+  if(state === "syncing"){ var sp=document.createElement("div"); sp.className="spinner"; b.appendChild(sp); }
+  var tx = document.createElement("span"); tx.textContent = " " + msg; b.appendChild(tx);
+  if(state !== "syncing"){ setTimeout(function(){ b.style.display="none"; }, 4000); }
 }
 
-// =====================================================================
-// LIVE RESULTS CACHE — النتائج الفعلية من الإنترنت
-// =====================================================================
-let liveResultsCache = { r32: [], r16: [], qf: [], sf: [], final: [] };
-let r32FixtureNames = []; // [{h, a, date}, ...] resolved team names for R32
-let lastFetchTime = null;
-let lastFetchError = null;
-
-// =====================================================================
-// MANUAL OVERRIDES — تدخل يدوي لو مصدر النتائج تأخر
-// لا تلمس أي منطق موجود؛ هاي بس تُطبَّق فوق نتائج المصدر الخارجي
-// =====================================================================
-const ADMIN_PIN = 'diaa95';
-const OVERRIDES_FILE = path.join(__dirname, 'data', 'overrides.json');
-
-function loadOverrides() {
-  try {
-    return JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8'));
-  } catch (e) {
-    return { r32: [], r16: [], qf: [], sf: [], final: [] };
-  }
-}
-function saveOverrides(data) {
-  fs.writeFileSync(OVERRIDES_FILE, JSON.stringify(data, null, 2));
-}
-// Apply saved manual overrides on top of whatever we fetched from the source
-function applyOverrides(results) {
-  const overrides = loadOverrides();
-  for (const round of ROUNDS) {
-    const ov = overrides[round] || [];
-    ov.forEach((winner, idx) => {
-      if (winner) {
-        if (!results[round]) results[round] = [];
-        results[round][idx] = winner;
-      }
-    });
-  }
-  return results;
-}
-
-async function fetchLiveResults() {
-  try {
-    const res = await fetch(SOURCE_URL);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const json = await res.json();
-    const matches = json.matches || [];
-
-    // Build a map: match num -> winner (Arabic name)
-    const numToWinner = {};
-    for (const m of matches) {
-      if (!m.num || !m.score || !m.score.ft) continue;
-      const [s1, s2] = m.score.ft;
-      let winner = null;
-      if (m.score.p) {
-        // penalties decide it
-        winner = m.score.p[0] > m.score.p[1] ? m.team1 : m.team2;
-      } else if (m.score.et) {
-        winner = m.score.et[0] > m.score.et[1] ? m.team1 : m.team2;
-      } else if (s1 !== s2) {
-        winner = s1 > s2 ? m.team1 : m.team2;
-      }
-      if (winner) {
-        numToWinner[m.num] = toArabic(winner);
-      }
+// ================================================================
+// SYNC RESULTS FROM SERVER (which fetches from internet automatically)
+// ================================================================
+function syncResults(silent){
+  if(!silent) showBar("syncing", "🔄 يتم تحديث النتائج...");
+  apiGet(API + "/api/results", function(err, data){
+    if(err || !data.success){
+      if(!silent) showBar("err", "❌ خطأ في الاتصال بالسيرفر");
+      return;
     }
+    S.liveResults = data.results;
+    S.lastFetch = data.lastFetch;
+    saveAndPushScore();
+    render();
+    if(!silent) showBar("ok", "✅ تم التحديث");
+  });
+}
 
-    // Map to round-indexed arrays our app expects
-    const newResults = { r32: [], r16: [], qf: [], sf: [], final: [] };
-    for (const round in ROUND_MATCH_NUMS) {
-      const nums = ROUND_MATCH_NUMS[round];
-      nums.forEach((num, idx) => {
-        if (numToWinner[num]) {
-          newResults[round][idx] = numToWinner[num];
+function saveAndPushScore(){
+  // Push our predictions to server, get back computed score
+  apiPost(API + "/api/predictions/" + S.userId, {
+    userName: S.userName,
+    userPhoto: S.userPhoto,
+    preds: S.preds,
+    locked: S.locked
+  }, function(err, data){
+    if(err) return;
+    // Now fetch our score
+    apiGet(API + "/api/predictions/" + S.userId, function(err2, data2){
+      if(err2 || !data2.success || !data2.score) return;
+      S.score = data2.score;
+      updateBanner();
+    });
+  });
+}
+
+function loadFromServer(cb){
+  apiGet(API + "/api/predictions/" + S.userId, function(err, data){
+    if(!err && data && data.success && data.user){
+      S.userName = data.user.userName || "";
+      S.userPhoto = data.user.userPhoto || null;
+      S.preds = data.user.preds || S.preds;
+      S.locked = !!data.user.locked;
+      if(data.score) S.score = data.score;
+    }
+    if(cb) cb();
+  });
+}
+
+function loadLeaderboard(cb){
+  apiGet(API + "/api/leaderboard", function(err, data){
+    if(!err && data && data.success){
+      S.leaderboard = data.leaderboard;
+    }
+    if(cb) cb();
+  });
+}
+
+// Auto-sync every 2 minutes
+function startAutoSync(){
+  setInterval(function(){ syncResults(true); }, 2*60*1000);
+}
+
+// ================================================================
+// LOCAL STORAGE BACKUP (in case server data not loaded yet)
+// ================================================================
+function saveLocal(){
+  try{
+    localStorage.setItem("diaa_wc2026_backup", JSON.stringify({
+      userName:S.userName, userPhoto:S.userPhoto, preds:S.preds, locked:S.locked
+    }));
+  }catch(e){}
+}
+function loadLocalBackup(){
+  try{
+    var raw = localStorage.getItem("diaa_wc2026_backup");
+    if(!raw) return;
+    var d = JSON.parse(raw);
+    if(d.userName) S.userName = d.userName;
+    if(d.userPhoto) S.userPhoto = d.userPhoto;
+    if(d.preds) S.preds = d.preds;
+    if(d.locked) S.locked = d.locked;
+  }catch(e){}
+}
+
+function initR32(){
+  if(S.preds.r32.length === 0){
+    for(var i=0;i<16;i++){
+      S.preds.r32.push({h:"؟",a:"؟",pick:""});
+    }
+  }
+}
+
+function loadFixtures(cb){
+  apiGet(API + "/api/fixtures", function(err, data){
+    if(!err && data && data.success && data.fixtures){
+      data.fixtures.forEach(function(f, i){
+        if(S.preds.r32[i] && !S.preds.r32[i].pick){
+          // Only update names if not already picked (preserve user's locked-in matches)
+          S.preds.r32[i].h = f.h;
+          S.preds.r32[i].a = f.a;
+          S.preds.r32[i].d = f.date;
+        } else if(S.preds.r32[i]){
+          S.preds.r32[i].d = f.date;
         }
       });
     }
-
-    // Build R32 fixture names (team1/team2 as resolved by source —
-    // shows placeholder like "3A/B/C/D/F" until groups are final, then real team)
-    const numToMatch = {};
-    for (const m of matches) {
-      if (m.num) numToMatch[m.num] = m;
-    }
-    const newFixtures = ROUND_MATCH_NUMS.r32.map(num => {
-      const m = numToMatch[num];
-      if (!m) return { h: '؟', a: '؟', date: '' };
-      return {
-        h: toArabic(m.team1) || m.team1,
-        a: toArabic(m.team2) || m.team2,
-        date: m.date || '',
-      };
-    });
-    r32FixtureNames = newFixtures;
-
-    liveResultsCache = applyOverrides(newResults);
-    lastFetchTime = new Date().toISOString();
-    lastFetchError = null;
-    console.log(`[${lastFetchTime}] Results updated successfully`);
-  } catch (e) {
-    lastFetchError = e.message;
-    console.error('Failed to fetch live results:', e.message);
-  }
+    if(cb) cb();
+  });
 }
 
-// Fetch immediately, then every 30 minutes
-fetchLiveResults();
-setInterval(fetchLiveResults, 30 * 60 * 1000);
+function save(){
+  saveLocal();
+  saveAndPushScore();
+}
 
-// =====================================================================
-// SCORE CALCULATION
-// =====================================================================
-const ROUNDS = ['r32', 'r16', 'qf', 'sf', 'final'];
-const PREV_ROUND = { r16: 'r32', qf: 'r16', sf: 'qf', final: 'sf' };
+// ================================================================
+// SCORE DISPLAY (computed server-side, just display here)
+// ================================================================
+function updateBanner(){
+  document.getElementById("bnPts").textContent = S.score.pts;
+  document.getElementById("bnCor").textContent = S.score.correct + "/" + S.score.total;
+  var fc = S.preds.final[0];
+  document.getElementById("bnChamp").textContent = (fc && fc.pick) ? fc.pick : "؟";
+}
 
-// Verified real FIFA World Cup 2026 knockout bracket dependencies
-// (which two earlier matches feed into each next-round match), by
-// official match number. This is NOT simple sequential pairing —
-// confirmed against the official schedule (cup_finals.txt).
-const BRACKET_FEEDS = {
-  r16:   [[74, 77], [73, 75], [76, 78], [79, 80], [83, 84], [81, 82], [86, 88], [85, 87]],
-  qf:    [[89, 90], [93, 94], [91, 92], [95, 96]],
-  sf:    [[97, 98], [99, 100]],
-  final: [[101, 102]],
+function allPicked(arr){
+  if(!arr || arr.length===0) return false;
+  for(var i=0;i<arr.length;i++){ if(!arr[i] || !arr[i].pick) return false; }
+  return true;
+}
+
+var BRACKET_FEEDS = {
+  r16:   [[74,77],[73,75],[76,78],[79,80],[83,84],[81,82],[86,88],[85,87]],
+  qf:    [[89,90],[93,94],[91,92],[95,96]],
+  sf:    [[97,98],[99,100]],
+  final: [[101,102]],
 };
+var ROUND_BASE = { r32:73, r16:89, qf:97, sf:101 };
 
-function rebuildBracket(preds, actual) {
-  // Given user's r32 predictions, rebuild r16/qf/sf/final based on
-  // their picks UNLESS the actual result contradicts — then propagate
-  // the real winner forward (substitution logic), marking isSub=true.
-  const r32src = (preds.r32 || []).map(p => ({ h: p.h || '؟', a: p.a || '؟', pick: p.pick || '' }));
-  const rounds = { r32: r32src.map(p => ({ ...p, sub: false })) };
-
-  for (let i = 1; i < ROUNDS.length; i++) {
-    const next = ROUNDS[i];
-    const cur = PREV_ROUND[next];
-    const curMatches = rounds[cur] || [];
-    const curActual = actual[cur] || [];
-    const nextPreds = preds[next] || [];
-    const feeds = BRACKET_FEEDS[next];
-    const baseNum = ROUND_MATCH_NUMS[cur][0];
-
-    const nextMatches = feeds.map((pair, idx) => {
-      const j = pair[0] - baseNum;
-      const k = pair[1] - baseNum;
-      const m1 = curMatches[j] || { h: '؟', a: '؟', pick: '' };
-      const m2 = curMatches[k] || { h: '؟', a: '؟', pick: '' };
-
-      // Determine actual winners (or predicted if not played yet)
-      const act1 = curActual[j];
-      const act2 = curActual[k];
-
-      const realHome = act1 || m1.pick || '؟';
-      const realAway = act2 || m2.pick || '؟';
-
-      const origPred = nextPreds[idx] || {};
-      let pick = origPred.pick || '';
-      let sub = false;
-
-      // Only treat this pick as a "substitution" if it specifically traces
-      // back to the team that got swapped — not just because the OTHER
-      // slot in this pairing had an unrelated upset. Also inherit sub
-      // status along the correct lineage (e.g. a team that was itself
-      // already a substitute in an earlier round stays a substitute).
-      if (pick && pick === m1.pick) {
-        if (act1 && act1 !== m1.pick) { sub = true; pick = act1; }
-        else if (m1.sub) { sub = true; }
-      } else if (pick && pick === m2.pick) {
-        if (act2 && act2 !== m2.pick) { sub = true; pick = act2; }
-        else if (m2.sub) { sub = true; }
-      }
-
-      return { h: realHome, a: realAway, pick, sub };
-    });
-    rounds[next] = nextMatches;
+function rebuildNext(from){
+  var toMap={r32:"r16",r16:"qf",qf:"sf",sf:"final"};
+  var toKey=toMap[from]; if(!toKey) return;
+  var src=S.preds[from]||[];
+  var ex=S.preds[toKey]||[];
+  var feeds=BRACKET_FEEDS[toKey];
+  var base=ROUND_BASE[from];
+  var next=[];
+  for(var idx=0; idx<feeds.length; idx++){
+    var j=feeds[idx][0]-base, k=feeds[idx][1]-base;
+    var h=src[j]&&src[j].pick?src[j].pick:"؟";
+    var a=src[k]&&src[k].pick?src[k].pick:"؟";
+    var old=ex[idx]||{};
+    var pick=(old.pick&&(old.pick===h||old.pick===a))?old.pick:"";
+    next.push({h:h,a:a,pick:pick});
   }
+  S.preds[toKey]=next;
+}
+function rebuildAll(){ rebuildNext("r32"); rebuildNext("r16"); rebuildNext("qf"); rebuildNext("sf"); }
 
-  return rounds;
+function go(ph){
+  S.phase = ph;
+  save();
+  if(ph === "leaderboard") loadLeaderboard(render);
+  else render();
 }
 
-function calcUserScore(predictions, actual) {
-  const preds = predictions.preds;
-  const rebuilt = rebuildBracket(preds, actual);
+// ================================================================
+// DOM HELPERS
+// ================================================================
+function el(tag,cls,txt){ var e=document.createElement(tag); if(cls)e.className=cls; if(txt!==undefined)e.textContent=txt; return e; }
+function btn(cls,txt,fn){ var b=el("button",cls,txt); if(fn)b.onclick=fn; return b; }
 
-  let pts = 0, correct = 0, total = 0;
-  const details = [];
+// ================================================================
+// RENDER
+// ================================================================
+function render(){
+  updateBanner(); renderHeader(); renderTabs();
+  var wrap = document.getElementById("wrap"); wrap.innerHTML = "";
+  var ph = S.phase;
+  if(ph==="intro") renderIntro(wrap);
+  else if(ph==="r32") renderRound(wrap,"r32");
+  else if(ph==="r16") renderRound(wrap,"r16");
+  else if(ph==="qf") renderRound(wrap,"qf");
+  else if(ph==="sf") renderRound(wrap,"sf");
+  else if(ph==="final") renderFinal(wrap);
+  else if(ph==="leaderboard") renderLeaderboard(wrap);
+}
 
-  for (const round of ROUNDS) {
-    const matches = rebuilt[round] || [];
-    const acts = actual[round] || [];
-    let roundPts = 0;
-    const roundCorrect = [];
-    const roundWrong = [];
+function renderHeader(){
+  var h = document.getElementById("hdr"); h.innerHTML = "";
+  if(S.userName){
+    var row = el("div","hrow");
+    if(S.userPhoto){
+      var img=document.createElement("img"); img.src=S.userPhoto;
+      img.style.cssText="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1.5px solid #C9A84C";
+      row.appendChild(img);
+    }
+    var tx=el("div");
+    tx.appendChild(el("div","htitle","🏆 "+S.userName));
+    tx.appendChild(el("div","hsub","تحدي ضياء · كأس العالم 2026"));
+    row.appendChild(tx); h.appendChild(row);
+  }else{
+    h.appendChild(el("div","htitle","⚽ تحدي ضياء — كأس العالم 2026"));
+    h.appendChild(el("div","hsub","الأدوار الإقصائية · 32 فريق"));
+  }
+}
 
-    matches.forEach((m, i) => {
-      if (!m.pick) return;
-      const act = acts[i];
-      if (!act) return;
-      total++;
-      if (m.pick === act) {
-        const p = m.sub ? 1 : 2;
-        roundPts += p;
-        pts += p;
-        correct++;
-        roundCorrect.push(m.pick);
+function renderTabs(){
+  var tabsEl = document.getElementById("tabs"); tabsEl.innerHTML = "";
+  var keys = ["intro","r32","r16","qf","sf","final","leaderboard"];
+  var lbls = {"intro":"👤","r32":"دور32","r16":"دور16","qf":"ربع","sf":"نصف","final":"🏆","leaderboard":"📊 الترتيب"};
+  for(var i=0;i<keys.length;i++){
+    var k = keys[i];
+    var done = k!=="leaderboard" && allPicked(S.preds[k]);
+    var isActive = S.phase === k;
+    var t = el("button","tab"+(isActive?" active":"")+(done&&!isActive?" done":""));
+    t.textContent = (done&&!isActive?"✓ ":"")+lbls[k];
+    (function(key){ t.onclick=function(){ go(key); }; })(k);
+    tabsEl.appendChild(t);
+  }
+}
+
+// ================================================================
+// INTRO
+// ================================================================
+function renderIntro(wrap){
+  var card = el("div","card"); card.appendChild(el("div","chd","👤 معلوماتي"));
+  var cbd = el("div","cbd");
+  cbd.appendChild(el("span","lbl","صورتي (اختياري)"));
+  var prow = el("div"); prow.style.cssText = "display:flex;align-items:center;gap:12px;margin-bottom:14px";
+  var circ = el("div","pcircle");
+  if(S.userPhoto){ var img=document.createElement("img"); img.src=S.userPhoto; circ.appendChild(img); }
+  else { circ.appendChild(el("span",null,"📷")); }
+  var finp = document.createElement("input"); finp.type="file"; finp.accept="image/*";
+  finp.onchange = function(){
+    var file=this.files[0]; if(!file) return;
+    var r=new FileReader();
+    r.onload=function(){ S.userPhoto=r.result; save(); render(); };
+    r.readAsDataURL(file);
+  };
+  circ.appendChild(finp); prow.appendChild(circ);
+  var ptxt = el("div");
+  ptxt.appendChild(el("div",null,"اضغط لاختيار صورة")).style.cssText="font-size:12px;color:#8899AA";
+  if(S.userPhoto){
+    var delB = btn(null,"✕ حذف",function(){ S.userPhoto=null; save(); render(); });
+    delB.style.cssText = "font-size:11px;color:#ff6b6b;background:none;border:none;cursor:pointer;padding:0;margin-top:4px;font-family:inherit";
+    ptxt.appendChild(delB);
+  }
+  prow.appendChild(ptxt); cbd.appendChild(prow);
+  cbd.appendChild(el("span","lbl","اسمك"));
+  var ninp = document.createElement("input"); ninp.type="text"; ninp.value=S.userName; ninp.placeholder="مثال: ضياء الدين سعيد";
+  ninp.oninput = function(){ S.userName=this.value; save(); renderHeader(); };
+  cbd.appendChild(ninp); card.appendChild(cbd); wrap.appendChild(card);
+
+  var info = el("div","infobox");
+  info.innerHTML = "<b style='color:#C9A84C'>⚽ قواعد التحدي:</b><br>"+
+    "✅ توقعك صح = <b style='color:#E8E8E8'>2 نقطة</b><br>"+
+    "🔄 الفريق الصح بس جاء بديلاً = <b style='color:#FFD700'>1 نقطة</b><br>"+
+    "❌ توقعك غلط = 0 نقطة<br>"+
+    "🤖 النتائج والنقاط تُحدّث تلقائياً من الإنترنت — بدون أي تدخل بشري";
+  wrap.appendChild(info);
+
+  if(S.lastFetch){
+    var ls = el("div",null,"آخر تحديث للنتائج: "+new Date(S.lastFetch).toLocaleString("ar"));
+    ls.style.cssText = "font-size:11px;color:#4CAF50;text-align:center;margin-bottom:8px";
+    wrap.appendChild(ls);
+  }
+  wrap.appendChild(btn("btn btnsync","🔄 تحديث النتائج الآن",function(){ syncResults(false); }));
+  if(S.locked) wrap.appendChild(el("div","lkbanner","🔒 توقعاتك محفوظة ومقفولة"));
+  wrap.appendChild(btn("btn btng","ابدأ التوقعات ← دور الـ32",function(){ go("r32"); }));
+  wrap.appendChild(btn("btn","📊 شوف ترتيب كل المشاركين",function(){ go("leaderboard"); }));
+}
+
+// ================================================================
+// ROUND
+// ================================================================
+function renderRound(wrap,key){
+  var rebuilt = (S.locked && S.score && S.score.rebuilt && S.score.rebuilt[key]) ? S.score.rebuilt[key] : null;
+  var matches = rebuilt || S.preds[key] || [];
+  var actual = S.liveResults[key] || [];
+  var isLocked = S.locked;
+  var nextMap={r32:"r16",r16:"qf",qf:"sf",sf:"final"};
+  var prevMap={r16:"r32",qf:"r16",sf:"qf"};
+  var nextKey=nextMap[key]; var prevKey=prevMap[key];
+  var done = allPicked(matches);
+  var pickedCnt=0; for(var pi=0;pi<matches.length;pi++){ if(matches[pi]&&matches[pi].pick) pickedCnt++; }
+
+  if(isLocked) wrap.appendChild(el("div","lkbanner","🔒 توقعاتك مقفولة — لا يمكن التعديل"));
+  var hrow = el("div"); hrow.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:10px";
+  var hl = el("span",null,RNAMES[key]+" — "+matches.length+" مباراة"); hl.style.cssText="font-size:12px;color:#8899AA";
+  var hr = el("span",null,pickedCnt+"/"+matches.length); hr.style.cssText="font-size:12px;color:"+(done?"#4CAF50":"#C9A84C");
+  hrow.appendChild(hl); hrow.appendChild(hr); wrap.appendChild(hrow);
+
+  for(var i=0;i<matches.length;i++){
+    var m = matches[i]; var act = actual[i] || "";
+    var hasAct = act !== ""; var isCor = hasAct && m.pick === act; var isWrong = hasAct && m.pick && !isCor;
+    var locked = isLocked || hasAct;
+    var mc = el("div","mc"+(m.pick?" picked":""));
+    var mhd = el("div","mhd");
+    var mnum = el("span",null,(i+1)); mnum.style.color="#2A3A50"; mhd.appendChild(mnum);
+    if(isCor) mhd.appendChild(el("span","rtag rtok", m.sub ? "✓+1" : "✓+2"));
+    else if(isWrong) mhd.appendChild(el("span","rtag rtno","✗"));
+    mc.appendChild(mhd);
+    var mrow = el("div","mrow");
+    var th = el("button","ts"+(m.pick===m.h?" W":m.pick?" L":"")+(locked?" dis":""));
+    if(locked) th.disabled=true;
+    (function(rk,idx,team){ th.onclick=function(){ pickTeam(rk,idx,team); }; })(key,i,m.h);
+    th.appendChild(el("span","tflag",fl(m.h))); th.appendChild(el("span","tname",m.h));
+    if(m.pick===m.h) th.appendChild(el("span","tchk","✓"));
+    mrow.appendChild(th); mrow.appendChild(el("div","vs","VS"));
+    var ta = el("button","ts"+(m.pick===m.a?" W":m.pick?" L":"")+(locked?" dis":""));
+    if(locked) ta.disabled=true;
+    (function(rk,idx,team){ ta.onclick=function(){ pickTeam(rk,idx,team); }; })(key,i,m.a);
+    if(m.pick===m.a) ta.appendChild(el("span","tchk","✓"));
+    var tan = el("span","tname",m.a); tan.style.textAlign="left"; ta.appendChild(tan); ta.appendChild(el("span","tflag",fl(m.a)));
+    mrow.appendChild(ta); mc.appendChild(mrow);
+    if(hasAct && !isCor) mc.appendChild(el("div","arow","الفائز الفعلي: "+act));
+    wrap.appendChild(mc);
+  }
+
+  if(prevKey){ (function(pk){ wrap.appendChild(btn("btn","← "+RNAMES[pk],function(){ go(pk); })); })(prevKey); }
+  if(nextKey && done){ (function(nk){ wrap.appendChild(btn("btn btng","التالي: "+RNAMES[nk]+" ←",function(){ rebuildAll(); go(nk); })); })(nextKey); }
+  else if(nextKey && !done){ var db=btn("btn","اختر كل الفائزين أولاً",null); db.disabled=true; wrap.appendChild(db); }
+}
+
+// ================================================================
+// FINAL
+// ================================================================
+function renderFinal(wrap){
+  var rebuiltFinal = (S.locked && S.score && S.score.rebuilt && S.score.rebuilt.final) ? S.score.rebuilt.final[0] : null;
+  var m = rebuiltFinal || (S.preds.final||[])[0] || {h:"؟",a:"؟",pick:""};
+  var act = (S.liveResults.final||[])[0] || "";
+  var hasAct = act !== ""; var isCor = hasAct && m.pick === act; var isWrong = hasAct && m.pick && !isCor;
+
+  var ftitle = el("div"); ftitle.style.cssText = "text-align:center;padding:8px 0 16px";
+  var fi = el("div",null,"🏆"); fi.style.fontSize="34px"; ftitle.appendChild(fi);
+  var fh = el("div",null,"نهائي كأس العالم 2026"); fh.style.cssText="font-size:16px;font-weight:900;color:#C9A84C;margin-top:4px";
+  ftitle.appendChild(fh);
+  var fd = el("div",null,"19 يوليو · MetLife Stadium"); fd.style.cssText="font-size:10px;color:#334;margin-top:3px";
+  ftitle.appendChild(fd); wrap.appendChild(ftitle);
+
+  var mc = el("div","mc"+(m.pick?" picked":"")); mc.style.border="1px solid #C9A84C44"; mc.style.marginBottom="14px";
+  var mhd = el("div","mhd"); mhd.appendChild(el("span",null,"البطل"));
+  if(isCor) mhd.appendChild(el("span","rtag rtok", m.sub ? "✓+1" : "✓+2"));
+  else if(isWrong) mhd.appendChild(el("span","rtag rtno","✗"));
+  mc.appendChild(mhd);
+  var mrow = el("div","mrow");
+  var th = el("button","ts"+(m.pick===m.h?" W":m.pick?" L":"")+(hasAct?" dis":""));
+  if(hasAct) th.disabled=true; th.onclick=function(){ pickTeam("final",0,m.h); };
+  th.appendChild(el("span","tflag",fl(m.h)));
+  var thn=el("span","tname",m.h); thn.style.fontSize="13px"; thn.style.fontWeight="700"; th.appendChild(thn);
+  if(m.pick===m.h){ var tc=el("span",null,"🏆"); tc.style.fontSize="16px"; th.appendChild(tc); }
+  mrow.appendChild(th); mrow.appendChild(el("div","vs","VS"));
+  var ta = el("button","ts"+(m.pick===m.a?" W":m.pick?" L":"")+(hasAct?" dis":""));
+  if(hasAct) ta.disabled=true; ta.onclick=function(){ pickTeam("final",0,m.a); };
+  if(m.pick===m.a){ var tc2=el("span",null,"🏆"); tc2.style.fontSize="16px"; ta.appendChild(tc2); }
+  var tan=el("span","tname",m.a); tan.style.fontSize="13px"; tan.style.fontWeight="700"; tan.style.textAlign="left";
+  ta.appendChild(tan); ta.appendChild(el("span","tflag",fl(m.a)));
+  mrow.appendChild(ta); mc.appendChild(mrow);
+  if(hasAct && !isCor) mc.appendChild(el("div","arow","البطل الفعلي: "+act));
+  wrap.appendChild(mc);
+
+  if(m.pick){
+    var pw = el("div"); pw.style.cssText="text-align:center;margin-bottom:14px";
+    pw.appendChild(el("div",null,"بطلي المتوقع")).style.cssText="font-size:11px;color:#445";
+    var pw2=el("div",null,"🏆 "+m.pick); pw2.style.cssText="font-size:24px;font-weight:900;color:#C9A84C;margin-top:4px";
+    pw.appendChild(pw2); wrap.appendChild(pw);
+  }
+
+  var scard = el("div","scorecard");
+  scard.appendChild(el("div",null,"مجموع نقاطي")).style.cssText="font-size:11px;color:#445;margin-bottom:4px";
+  scard.appendChild(el("div","bigs",String(S.score.pts)));
+  var sc3=el("div",null,"🎯 "+S.score.correct+" توقع صحيح من "+S.score.total);
+  sc3.style.cssText="font-size:13px;color:#4CAF50;font-weight:700;margin-top:8px";
+  scard.appendChild(sc3); wrap.appendChild(scard);
+
+  wrap.appendChild(btn("btn","← نصف النهائي",function(){ go("sf"); }));
+  if(!S.locked && m.pick){
+    wrap.appendChild(btn("btn btngrn","✅ موافق — تأكيد وقفل كل التوقعات",function(){
+      if(confirm("بعد الموافقة ما بتنقدر تعدل. تأكيد؟")){ S.locked=true; save(); render(); }
+    }));
+  }
+  if(S.locked){
+    var lb=el("div",null,"🔒 توقعاتك مقفولة ومحفوظة");
+    lb.style.cssText="font-size:12px;color:#4CAF50;text-align:center;padding:8px;background:#081808;border-radius:8px;margin-bottom:6px";
+    wrap.appendChild(lb);
+  }
+  wrap.appendChild(btn("btn","📊 شوف ترتيب كل المشاركين",function(){ go("leaderboard"); }));
+}
+
+// ================================================================
+// LEADERBOARD — ترتيب كل المشاركين (محسوب تلقائياً)
+// ================================================================
+function renderLeaderboard(wrap){
+  var card = el("div","card");
+  card.appendChild(el("div","chd","📊 ترتيب المشاركين"));
+  var cbd = el("div","cbd"); cbd.style.padding = "0";
+
+  if(!S.leaderboard || S.leaderboard.length === 0){
+    var empty = el("div",null,"لسا ما في مشاركين. شارك التطبيق مع رفقاتك!");
+    empty.style.cssText = "padding:20px;text-align:center;color:#667;font-size:13px";
+    cbd.appendChild(empty);
+  }else{
+    S.leaderboard.forEach(function(u, idx){
+      var row = el("div","lb-row");
+      row.style.cursor = "pointer";
+      row.onclick = function(){ showUserPicks(u.userId, u.userName); };
+      var rankCls = idx===0?"gold":idx===1?"silver":idx===2?"bronze":"";
+      var rank = el("div","lb-rank "+rankCls, String(idx+1));
+      row.appendChild(rank);
+
+      var avatar;
+      if(u.userPhoto){
+        avatar = document.createElement("img");
+        avatar.src = u.userPhoto;
+        avatar.className = "lb-avatar";
       } else {
-        roundWrong.push(`توقعت ${m.pick} والفائز الفعلي ${act}`);
+        avatar = el("div","lb-avatar","👤");
       }
+      row.appendChild(avatar);
+
+      var info = el("div","lb-info");
+      info.appendChild(el("div","lb-name", u.userName || "مشترك"));
+      var champTxt = u.champion ? ("🏆 "+u.champion) : "لم يحدد بطل بعد";
+      info.appendChild(el("div","lb-champ", champTxt));
+      row.appendChild(info);
+
+      var ptsBox = el("div");
+      ptsBox.style.cssText = "text-align:left";
+      ptsBox.appendChild(el("div","lb-pts", String(u.pts)));
+      ptsBox.appendChild(el("div","lb-correct", u.correct+"/"+u.total));
+      row.appendChild(ptsBox);
+
+      cbd.appendChild(row);
     });
-
-    details.push({ round, points: roundPts, correct: roundCorrect, wrong: roundWrong });
   }
-
-  return { pts, correct, total, details, rebuilt };
+  card.appendChild(cbd); wrap.appendChild(card);
+  wrap.appendChild(btn("btn btnsync","🔄 تحديث الترتيب",function(){ loadLeaderboard(render); }));
+  wrap.appendChild(btn("btn","← عودة",function(){ go("intro"); }));
 }
 
-// =====================================================================
-// API ROUTES
-// =====================================================================
+// ================================================================
+// ACTIONS
+// ================================================================
+function pickTeam(key,idx,team){
+  if(S.locked) return;
+  if(!S.preds[key] || !S.preds[key][idx]) return;
+  S.preds[key][idx].pick = team;
+  rebuildAll(); save(); render();
+}
 
-// Get current live results
-app.get('/api/results', (req, res) => {
-  res.json({
-    success: true,
-    results: liveResultsCache,
-    lastFetch: lastFetchTime,
-    error: lastFetchError,
-  });
-});
+// ================================================================
+// VIEW ANOTHER PARTICIPANT'S PICKS (read-only popup)
+// ================================================================
+function showUserPicks(userId, userName){
+  var overlay = el("div");
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999;display:flex;align-items:flex-end;justify-content:center";
+  overlay.onclick = function(e){ if(e.target === overlay) document.body.removeChild(overlay); };
 
-// Get R32 fixture team names (resolved as groups finish)
-app.get('/api/fixtures', (req, res) => {
-  res.json({
-    success: true,
-    fixtures: r32FixtureNames,
-    lastFetch: lastFetchTime,
-  });
-});
+  var box = el("div");
+  box.style.cssText = "background:#0D1F3E;border-radius:16px 16px 0 0;max-height:80vh;overflow-y:auto;width:100%;max-width:480px;padding:16px";
+  var title = el("div",null,"توقعات "+(userName||"المشترك"));
+  title.style.cssText = "font-size:16px;font-weight:700;color:#C9A84C;margin-bottom:12px;text-align:center";
+  box.appendChild(title);
 
-// Force refresh results from source
-app.post('/api/results/refresh', async (req, res) => {
-  await fetchLiveResults();
-  res.json({ success: !lastFetchError, results: liveResultsCache, lastFetch: lastFetchTime, error: lastFetchError });
-});
+  var loading = el("div",null,"جاري التحميل...");
+  loading.style.cssText = "text-align:center;color:#8899AA;padding:20px";
+  box.appendChild(loading);
 
-// Save a user's predictions
-app.post('/api/predictions/:userId', (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { userName, userPhoto, preds, locked } = req.body;
-    const data = loadPredictions();
-    data.users[userId] = {
-      userId, userName, userPhoto, preds,
-      locked: !!locked,
-      updatedAt: new Date().toISOString(),
-    };
-    savePredictions(data);
-    res.json({ success: true });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
+  var closeBtn = btn("btn","إغلاق",function(){ document.body.removeChild(overlay); });
+  closeBtn.style.marginTop = "12px";
+  box.appendChild(closeBtn);
 
-// Get a single user's predictions + their live score
-app.get('/api/predictions/:userId', (req, res) => {
-  try {
-    const { userId } = req.params;
-    const data = loadPredictions();
-    const user = data.users[userId];
-    if (!user) return res.json({ success: true, user: null });
-    const score = calcUserScore(user, liveResultsCache);
-    res.json({ success: true, user, score: { pts: score.pts, correct: score.correct, total: score.total, details: score.details, rebuilt: score.rebuilt } });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 
-// Leaderboard — كل المشاركين مع نقاطهم (محسوبة تلقائياً)
-app.get('/api/leaderboard', (req, res) => {
-  try {
-    const data = loadPredictions();
-    const board = Object.values(data.users)
-      .filter(user => !user.hidden) // حسابات مخفية ما بتظهر بالقائمة العامة، بس نقاطها بتضل تنحسب
-      .map(user => {
-      const score = calcUserScore(user, liveResultsCache);
-      const champion = user.preds.final && user.preds.final[0] ? user.preds.final[0].pick : '';
-      return {
-        userId: user.userId,
-        userName: user.userName,
-        userPhoto: user.userPhoto,
-        locked: user.locked,
-        pts: score.pts,
-        correct: score.correct,
-        total: score.total,
-        champion,
-      };
+  apiGet(API + "/api/predictions/" + encodeURIComponent(userId), function(err, data){
+    box.removeChild(loading);
+    if(err || !data || !data.success || !data.user){
+      var e2 = el("div",null,"تعذر تحميل التوقعات"); e2.style.cssText="text-align:center;color:#ff6b6b;padding:12px";
+      box.insertBefore(e2, closeBtn);
+      return;
+    }
+    var preds = data.user.preds || {};
+    ROUNDS.forEach(function(rk){
+      var list = preds[rk] || [];
+      if(!list.length) return;
+      var sec = el("div"); sec.style.marginBottom = "10px";
+      var h = el("div",null, RNAMES[rk]);
+      h.style.cssText = "font-size:13px;color:#C9A84C;font-weight:700;margin:10px 0 6px";
+      sec.appendChild(h);
+      list.forEach(function(m){
+        if(!m || !m.pick) return;
+        var line = el("div", null, fl(m.pick)+" "+m.pick);
+        line.style.cssText = "font-size:13px;color:#E8E8E8;padding:6px 10px;background:#060C18;border-radius:8px;margin-bottom:5px";
+        sec.appendChild(line);
+      });
+      box.insertBefore(sec, closeBtn);
     });
-    board.sort((a, b) => b.pts - a.pts);
-    res.json({ success: true, leaderboard: board, lastFetch: lastFetchTime });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
+  });
+}
 
-app.get('/api/health', (req, res) => {
-  res.json({ ok: true, lastFetch: lastFetchTime, error: lastFetchError });
-});
+// ================================================================
+// INIT
+// ================================================================
+loadLocalBackup();
+initR32();
+render();
 
-// =====================================================================
-// ADMIN OVERRIDE ROUTES — إدخال نتيجة يدوياً (PIN محمي)
-// لا تؤثر إطلاقاً على توقعات المستخدمين المحفوظة (data/predictions.json)
-// =====================================================================
-app.get('/api/admin/overrides', (req, res) => {
-  const { pin } = req.query;
-  if (pin !== ADMIN_PIN) return res.status(401).json({ success: false, error: 'PIN غلط' });
-  res.json({ success: true, overrides: loadOverrides(), teams: TEAM_AR, roundMatchNums: ROUND_MATCH_NUMS, fixtures: r32FixtureNames });
-});
-
-app.post('/api/admin/override', (req, res) => {
-  const { pin, round, index, winner } = req.body;
-  if (pin !== ADMIN_PIN) return res.status(401).json({ success: false, error: 'PIN غلط' });
-  if (!ROUNDS.includes(round)) return res.status(400).json({ success: false, error: 'دور غير صحيح' });
-  const overrides = loadOverrides();
-  if (!overrides[round]) overrides[round] = [];
-  overrides[round][index] = winner || null; // null clears the override for that match
-  saveOverrides(overrides);
-  // Reflect immediately in the live cache without waiting for the next scheduled fetch
-  liveResultsCache = applyOverrides({ ...liveResultsCache });
-  res.json({ success: true, overrides });
-});
-
-// List users (id + name only) so an admin page can pick who to delete
-app.get('/api/admin/users', (req, res) => {
-  const { pin } = req.query;
-  if (pin !== ADMIN_PIN) return res.status(401).json({ success: false, error: 'PIN غلط' });
-  const data = loadPredictions();
-  const users = Object.values(data.users).map(u => ({ userId: u.userId, userName: u.userName }));
-  res.json({ success: true, users });
-});
-
-// Delete a single user's saved predictions
-app.delete('/api/admin/users/:userId', (req, res) => {
-  const { pin } = req.query;
-  if (pin !== ADMIN_PIN) return res.status(401).json({ success: false, error: 'PIN غلط' });
-  const { userId } = req.params;
-  const data = loadPredictions();
-  if (!data.users[userId]) return res.status(404).json({ success: false, error: 'المستخدم مش موجود' });
-  delete data.users[userId];
-  savePredictions(data);
-  res.json({ success: true });
-});
-
-// Same delete, but as a plain GET link you can just open in the browser —
-// e.g. /api/admin/reset/USER_ID?secret=diaa95
-app.get('/api/admin/reset/:userId', (req, res) => {
-  const { secret } = req.query;
-  if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
-  const { userId } = req.params;
-  const data = loadPredictions();
-  if (!data.users[userId]) return res.status(404).send('المستخدم مش موجود: ' + userId);
-  const name = data.users[userId].userName || userId;
-  delete data.users[userId];
-  savePredictions(data);
-  res.send('تم حذف المستخدم: ' + name);
-});
-
-// Raw stored predictions for one user (for debugging) — shows exact stored strings
-// e.g. /api/admin/raw/USER_ID?secret=diaa95
-app.get('/api/admin/raw/:userId', (req, res) => {
-  const { secret } = req.query;
-  if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
-  const { userId } = req.params;
-  const data = loadPredictions();
-  const user = data.users[userId];
-  if (!user) return res.status(404).send('المستخدم مش موجود: ' + userId);
-  const score = calcUserScore(user, liveResultsCache);
-  res.type('text/plain').send(
-    '=== RAW preds (كما خزنها المستخدم) ===\n' +
-    JSON.stringify(user.preds, null, 2) +
-    '\n\n=== LIVE RESULTS (النتائج الفعلية المخزنة بالسيرفر) ===\n' +
-    JSON.stringify(liveResultsCache, null, 2) +
-    '\n\n=== REBUILT (بعد تطبيق الاستبدال) ===\n' +
-    JSON.stringify(score.rebuilt, null, 2)
-  );
-});
-
-// HTML list of everyone + clickable delete/hide links, so you know what to put in the reset link above
-// e.g. /api/admin/list?secret=diaa95
-app.get('/api/admin/list', (req, res) => {
-  const { secret } = req.query;
-  if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
-  const data = loadPredictions();
-  const users = Object.values(data.users);
-  const rows = users.map(u => `
-    <div style="background:#0D1F3E;border:1px solid #1E3050;border-radius:10px;padding:12px;margin-bottom:10px;font-family:-apple-system,Arial,sans-serif">
-      <div style="color:#C9A84C;font-weight:700;font-size:15px;margin-bottom:8px">
-        ${u.userName || '(بدون اسم)'} ${u.hidden ? '<span style="color:#ff6b6b;font-size:12px">[مخفي]</span>' : ''}
-      </div>
-      <a href="/api/admin/reset/${u.userId}?secret=${ADMIN_PIN}"
-         onclick="return confirm('متأكد من حذف ${u.userName || u.userId}؟')"
-         style="display:inline-block;background:#6B1A1A;color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:13px;margin-left:8px">🗑️ حذف</a>
-      <a href="/api/admin/toggle-hide/${u.userId}?secret=${ADMIN_PIN}"
-         style="display:inline-block;background:#3A2A1A;color:#F0D060;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:13px;margin-left:8px">${u.hidden ? '👁️ إظهار' : '🙈 إخفاء'}</a>
-      <a href="/api/admin/raw/${u.userId}?secret=${ADMIN_PIN}"
-         style="display:inline-block;background:#1A2A3A;color:#8899AA;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:13px">🔍 بيانات خام</a>
-    </div>`).join('');
-  res.send(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>إدارة المشتركين</title></head>
-    <body style="background:#0A1628;padding:14px;margin:0">
-      <h2 style="color:#C9A84C;font-family:-apple-system,Arial,sans-serif;font-size:16px;text-align:center;margin-bottom:16px">👥 إدارة المشتركين</h2>
-      ${users.length ? rows : '<div style="color:#8899AA;text-align:center;font-family:-apple-system,Arial,sans-serif;padding:20px">ما في مشتركين مسجلين حالياً</div>'}
-    </body></html>`);
-});
-
-// Hide/unhide a user from the public leaderboard — their points still count, they just don't show
-// e.g. /api/admin/toggle-hide/USER_ID?secret=diaa95
-app.get('/api/admin/toggle-hide/:userId', (req, res) => {
-  const { secret } = req.query;
-  if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
-  const { userId } = req.params;
-  const data = loadPredictions();
-  if (!data.users[userId]) return res.status(404).send('المستخدم مش موجود: ' + userId);
-  data.users[userId].hidden = !data.users[userId].hidden;
-  savePredictions(data);
-  const name = data.users[userId].userName || userId;
-  res.send((data.users[userId].hidden ? 'تم إخفاء: ' : 'تم إظهار: ') + name);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`تحدي ضياء server running on port ${PORT}`);
+// Load real data from server, then start syncing
+loadFromServer(function(){
+  loadFixtures(function(){
+    render();
+    syncResults(true);
+    startAutoSync();
+  });
 });
 
