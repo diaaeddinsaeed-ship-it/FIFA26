@@ -220,16 +220,27 @@ function allPicked(arr){
   return true;
 }
 
+var BRACKET_FEEDS = {
+  r16:   [[74,77],[73,75],[76,78],[79,80],[83,84],[81,82],[86,88],[85,87]],
+  qf:    [[89,90],[93,94],[91,92],[95,96]],
+  sf:    [[97,98],[99,100]],
+  final: [[101,102]],
+};
+var ROUND_BASE = { r32:73, r16:89, qf:97, sf:101 };
+
 function rebuildNext(from){
   var toMap={r32:"r16",r16:"qf",qf:"sf",sf:"final"};
   var toKey=toMap[from]; if(!toKey) return;
   var src=S.preds[from]||[];
   var ex=S.preds[toKey]||[];
+  var feeds=BRACKET_FEEDS[toKey];
+  var base=ROUND_BASE[from];
   var next=[];
-  for(var i=0;i<src.length;i+=2){
-    var h=src[i]&&src[i].pick?src[i].pick:"؟";
-    var a=src[i+1]&&src[i+1].pick?src[i+1].pick:"؟";
-    var old=ex[next.length]||{};
+  for(var idx=0; idx<feeds.length; idx++){
+    var j=feeds[idx][0]-base, k=feeds[idx][1]-base;
+    var h=src[j]&&src[j].pick?src[j].pick:"؟";
+    var a=src[k]&&src[k].pick?src[k].pick:"؟";
+    var old=ex[idx]||{};
     var pick=(old.pick&&(old.pick===h||old.pick===a))?old.pick:"";
     next.push({h:h,a:a,pick:pick});
   }
@@ -593,3 +604,4 @@ loadFromServer(function(){
     startAutoSync();
   });
 });
+
