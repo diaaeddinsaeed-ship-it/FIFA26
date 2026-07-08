@@ -418,6 +418,26 @@ app.get('/api/admin/reset/:userId', (req, res) => {
   res.send('تم حذف المستخدم: ' + name);
 });
 
+// Raw stored predictions for one user (for debugging) — shows exact stored strings
+// e.g. /api/admin/raw/USER_ID?secret=diaa95
+app.get('/api/admin/raw/:userId', (req, res) => {
+  const { secret } = req.query;
+  if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
+  const { userId } = req.params;
+  const data = loadPredictions();
+  const user = data.users[userId];
+  if (!user) return res.status(404).send('المستخدم مش موجود: ' + userId);
+  const score = calcUserScore(user, liveResultsCache);
+  res.type('text/plain').send(
+    '=== RAW preds (كما خزنها المستخدم) ===\n' +
+    JSON.stringify(user.preds, null, 2) +
+    '\n\n=== LIVE RESULTS (النتائج الفعلية المخزنة بالسيرفر) ===\n' +
+    JSON.stringify(liveResultsCache, null, 2) +
+    '\n\n=== REBUILT (بعد تطبيق الاستبدال) ===\n' +
+    JSON.stringify(score.rebuilt, null, 2)
+  );
+});
+
 // HTML list of everyone + clickable delete/hide links, so you know what to put in the reset link above
 // e.g. /api/admin/list?secret=diaa95
 app.get('/api/admin/list', (req, res) => {
@@ -434,7 +454,9 @@ app.get('/api/admin/list', (req, res) => {
          onclick="return confirm('متأكد من حذف ${u.userName || u.userId}؟')"
          style="display:inline-block;background:#6B1A1A;color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:13px;margin-left:8px">🗑️ حذف</a>
       <a href="/api/admin/toggle-hide/${u.userId}?secret=${ADMIN_PIN}"
-         style="display:inline-block;background:#3A2A1A;color:#F0D060;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:13px">${u.hidden ? '👁️ إظهار' : '🙈 إخفاء'}</a>
+         style="display:inline-block;background:#3A2A1A;color:#F0D060;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:13px;margin-left:8px">${u.hidden ? '👁️ إظهار' : '🙈 إخفاء'}</a>
+      <a href="/api/admin/raw/${u.userId}?secret=${ADMIN_PIN}"
+         style="display:inline-block;background:#1A2A3A;color:#8899AA;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:13px">🔍 بيانات خام</a>
     </div>`).join('');
   res.send(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>إدارة المشتركين</title></head>
     <body style="background:#0A1628;padding:14px;margin:0">
