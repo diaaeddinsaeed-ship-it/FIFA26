@@ -436,6 +436,73 @@ app.get('/api/admin/reset/:userId', (req, res) => {
   res.send('تم حذف المستخدم: ' + name);
 });
 
+// =====================================================================
+// ONE-TIME BRACKET MIGRATION — repositions old r16/qf/sf/final picks
+// (made under the old, incorrect sequential-pairing assumption) into
+// their correct slots under the verified real bracket structure —
+// based on team identity, so nobody has to redo their predictions.
+// =====================================================================
+function migrateUserBracket(user) {
+  const preds = user.preds || {};
+  const r32 = preds.r32 || [];
+
+  // team name -> its r32 match number (73-88), from the user's own r32 picks
+  const teamToMatchNum = {};
+  r32.forEach((p, i) => {
+    if (p && p.pick) teamToMatchNum[p.pick] = ROUND_MATCH_NUMS.r32[i];
+  });
+
+  const newPreds = { r32 };
+  let changed = false;
+
+  for (const round of ['r16', 'qf', 'sf', 'final']) {
+    const oldArr = preds[round] || [];
+    const feeds = BRACKET_FEEDS[round];
+    const newArr = feeds.map(() => ({ h: '؟', a: '؟', pick: '' }));
+
+    // Collect every non-empty pick the user made anywhere in the OLD array —
+    // each one is a real team name and unambiguously belongs to exactly one
+    // new slot based on which two earlier matches it descends from.
+    oldArr.forEach(entry => {
+      if (!entry || !entry.pick) return;
+      const team = entry.pick;
+      const matchNum = teamToMatchNum[team];
+      if (matchNum == null) return; // can't trace this team's lineage, skip
+      const slotIdx = feeds.findIndex(pair => pair.includes(matchNum));
+      if (slotIdx === -1) return;
+      newArr[slotIdx].pick = team;
+      changed = true;
+    });
+
+    newPreds[round] = newArr;
+
+    // Extend the lineage map one level deeper for the next round:
+    // each new slot's chosen pick (if any) now stands in for a
+    // "virtual match number" = this round's official match number.
+    feeds.forEach((pair, idx) => {
+      if (newArr[idx].pick) teamToMatchNum[newArr[idx].pick] = ROUND_MATCH_NUMS[round][idx];
+    });
+  }
+
+  if (changed) user.preds = newPreds;
+  return changed;
+}
+
+// Run the migration for every stored user at once.
+// e.g. /api/admin/migrate-bracket?secret=diaa95
+app.get('/api/admin/migrate-bracket', (req, res) => {
+  const { secret } = req.query;
+  if (secret !== ADMIN_PIN) return res.status(401).send('PIN غلط');
+  const data = loadPredictions();
+  const results = [];
+  Object.values(data.users).forEach(user => {
+    const changed = migrateUserBracket(user);
+    results.push((user.userName || user.userId) + ': ' + (changed ? 'تم التصحيح ✅' : 'ما احتاج تعديل'));
+  });
+  savePredictions(data);
+  res.type('text/plain').send('تم ترحيل بيانات كل المشتركين:\n\n' + results.join('\n'));
+});
+
 // Raw stored predictions for one user (for debugging) — shows exact stored strings
 // e.g. /api/admin/raw/USER_ID?secret=diaa95
 app.get('/api/admin/raw/:userId', (req, res) => {
