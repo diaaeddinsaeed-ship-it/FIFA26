@@ -11,7 +11,13 @@ const fs = require('fs');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  },
+}));
 
 const DATA_FILE = path.join(__dirname, 'data', 'predictions.json');
 const SOURCE_URL = 'https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json';
@@ -495,4 +501,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`تحدي ضياء server running on port ${PORT}`);
 });
-
