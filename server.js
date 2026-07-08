@@ -177,7 +177,18 @@ setInterval(fetchLiveResults, 30 * 60 * 1000);
 // SCORE CALCULATION
 // =====================================================================
 const ROUNDS = ['r32', 'r16', 'qf', 'sf', 'final'];
-const NEXT_ROUND = { r32: 'r16', r16: 'qf', qf: 'sf', sf: 'final' };
+const PREV_ROUND = { r16: 'r32', qf: 'r16', sf: 'qf', final: 'sf' };
+
+// Verified real FIFA World Cup 2026 knockout bracket dependencies
+// (which two earlier matches feed into each next-round match), by
+// official match number. This is NOT simple sequential pairing —
+// confirmed against the official schedule (cup_finals.txt).
+const BRACKET_FEEDS = {
+  r16:   [[74, 77], [73, 75], [76, 78], [79, 80], [83, 84], [81, 82], [86, 88], [85, 87]],
+  qf:    [[89, 90], [93, 94], [91, 92], [95, 96]],
+  sf:    [[97, 98], [99, 100]],
+  final: [[101, 102]],
+};
 
 function rebuildBracket(preds, actual) {
   // Given user's r32 predictions, rebuild r16/qf/sf/final based on
@@ -186,27 +197,28 @@ function rebuildBracket(preds, actual) {
   const r32src = (preds.r32 || []).map(p => ({ h: p.h || '؟', a: p.a || '؟', pick: p.pick || '' }));
   const rounds = { r32: r32src.map(p => ({ ...p, sub: false })) };
 
-  for (let i = 0; i < ROUNDS.length - 1; i++) {
-    const cur = ROUNDS[i];
-    const next = ROUNDS[i + 1];
+  for (let i = 1; i < ROUNDS.length; i++) {
+    const next = ROUNDS[i];
+    const cur = PREV_ROUND[next];
     const curMatches = rounds[cur] || [];
     const curActual = actual[cur] || [];
     const nextPreds = preds[next] || [];
+    const feeds = BRACKET_FEEDS[next];
+    const baseNum = ROUND_MATCH_NUMS[cur][0];
 
-    const nextMatches = [];
-    for (let j = 0; j < curMatches.length; j += 2) {
-      if (!curMatches[j]) continue;
+    const nextMatches = feeds.map((pair, idx) => {
+      const j = pair[0] - baseNum;
+      const k = pair[1] - baseNum;
       const m1 = curMatches[j] || { h: '؟', a: '؟', pick: '' };
-      const m2 = curMatches[j + 1] || { h: '؟', a: '؟', pick: '' };
+      const m2 = curMatches[k] || { h: '؟', a: '؟', pick: '' };
 
       // Determine actual winners (or predicted if not played yet)
       const act1 = curActual[j];
-      const act2 = curActual[j + 1];
+      const act2 = curActual[k];
 
       const realHome = act1 || m1.pick || '؟';
       const realAway = act2 || m2.pick || '؟';
 
-      const idx = nextMatches.length;
       const origPred = nextPreds[idx] || {};
       let pick = origPred.pick || '';
       let sub = false;
@@ -224,8 +236,8 @@ function rebuildBracket(preds, actual) {
         else if (m2.sub) { sub = true; }
       }
 
-      nextMatches.push({ h: realHome, a: realAway, pick, sub });
-    }
+      return { h: realHome, a: realAway, pick, sub };
+    });
     rounds[next] = nextMatches;
   }
 
