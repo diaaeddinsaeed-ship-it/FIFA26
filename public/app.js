@@ -126,12 +126,21 @@ function saveAndPushScore(){
 
 function loadFromServer(cb){
   apiGet(API + "/api/predictions/" + S.userId, function(err, data){
-    if(!err && data && data.success && data.user){
-      S.userName = data.user.userName || "";
-      S.userPhoto = data.user.userPhoto || null;
-      S.preds = data.user.preds || S.preds;
-      S.locked = !!data.user.locked;
-      if(data.score) S.score = data.score;
+    if(!err && data && data.success){
+      if(data.user){
+        S.userName = data.user.userName || "";
+        S.userPhoto = data.user.userPhoto || null;
+        S.preds = data.user.preds || S.preds;
+        S.locked = !!data.user.locked;
+        if(data.score) S.score = data.score;
+      } else {
+        // Server has no record for this user (e.g. account was deleted/reset) —
+        // don't keep showing the stale local backup, start fresh.
+        S.preds = {r32:[],r16:[],qf:[],sf:[],final:[]};
+        S.locked = false;
+        S.score = {pts:0,correct:0,total:0,details:[]};
+        try{ localStorage.removeItem("diaa_wc2026_backup"); }catch(e){}
+      }
     }
     if(cb) cb();
   });
@@ -606,4 +615,3 @@ loadFromServer(function(){
     startAutoSync();
   });
 });
-
