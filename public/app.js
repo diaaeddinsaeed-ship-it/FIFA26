@@ -230,6 +230,18 @@ function allPicked(arr){
   for(var i=0;i<arr.length;i++){ if(!arr[i] || !arr[i].pick) return false; }
   return true;
 }
+// Like allPicked, but a match that's already been played in real life
+// (its actual result is already known) doesn't block completion even
+// if the user never got to pick it — only matches still ahead count.
+function allAnswerable(arr, key){
+  if(!arr || arr.length===0) return false;
+  var actual = (S.liveResults && S.liveResults[key]) || [];
+  for(var i=0;i<arr.length;i++){
+    var already = actual[i] && actual[i] !== "";
+    if(!already && (!arr[i] || !arr[i].pick)) return false;
+  }
+  return true;
+}
 
 var BRACKET_FEEDS = {
   r16:   [[74,77],[73,75],[76,78],[79,80],[83,84],[81,82],[86,88],[85,87]],
@@ -313,7 +325,7 @@ function renderTabs(){
   var lbls = {"intro":"👤","r32":"دور32","r16":"دور16","qf":"ربع","sf":"نصف","final":"🏆","leaderboard":"📊 الترتيب"};
   for(var i=0;i<keys.length;i++){
     var k = keys[i];
-    var done = k!=="leaderboard" && allPicked(S.preds[k]);
+    var done = k!=="leaderboard" && k!=="intro" && allAnswerable(S.preds[k], k);
     var isActive = S.phase === k;
     var t = el("button","tab"+(isActive?" active":"")+(done&&!isActive?" done":""));
     t.textContent = (done&&!isActive?"✓ ":"")+lbls[k];
@@ -384,7 +396,7 @@ function renderRound(wrap,key){
   var nextMap={r32:"r16",r16:"qf",qf:"sf",sf:"final"};
   var prevMap={r16:"r32",qf:"r16",sf:"qf"};
   var nextKey=nextMap[key]; var prevKey=prevMap[key];
-  var done = allPicked(matches);
+  var done = allAnswerable(matches, key);
   var pickedCnt=0; for(var pi=0;pi<matches.length;pi++){ if(matches[pi]&&matches[pi].pick) pickedCnt++; }
 
   if(isLocked) wrap.appendChild(el("div","lkbanner","🔒 توقعاتك مقفولة — لا يمكن التعديل"));
