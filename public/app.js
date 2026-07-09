@@ -135,8 +135,10 @@ function loadFromServer(cb){
         if(data.score) S.score = data.score;
       } else {
         // Server has no record for this user (e.g. account was deleted/reset) —
-        // don't keep showing the stale local backup, start fresh.
-        S.preds = {r32:[],r16:[],qf:[],sf:[],final:[]};
+        // don't keep showing the stale local backup, start fresh. Keep the
+        // r32 fixture skeleton (team names) intact — only clear picks.
+        (S.preds.r32 || []).forEach(function(m){ if(m) m.pick = ""; });
+        S.preds.r16 = []; S.preds.qf = []; S.preds.sf = []; S.preds.final = [];
         S.locked = false;
         S.score = {pts:0,correct:0,total:0,details:[]};
         try{ localStorage.removeItem("diaa_wc2026_backup"); }catch(e){}
